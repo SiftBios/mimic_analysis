@@ -1,0 +1,881 @@
+<!-- File: templates/sequence_detail.html -->
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Sequence Analysis - {{ sequence_id }}</title>
+    
+    <!-- Load Bootstrap CSS -->
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0-alpha1/dist/css/bootstrap.min.css" rel="stylesheet">
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.8.0/font/bootstrap-icons.css">
+    
+    <!-- Load custom CSS -->
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/styles.css') }}">
+    
+    <!-- Favicon -->
+    <link rel="icon" type="image/svg+xml" href="{{ url_for('static', filename='img/favicon.svg') }}">
+    
+    <style>
+        /* Additional styles for sequence detail page */
+        .sequence-display {
+            font-family: 'Courier New', monospace;
+            font-size: 0.9rem;
+            max-height: 400px;
+            overflow-y: auto;
+            line-height: 1.5;
+            background-color: #f8f9fa;
+            border: 1px solid #dee2e6;
+            border-radius: 4px;
+        }
+
+        .fasta-header {
+            color: #0d6efd;
+            font-weight: bold;
+            margin-bottom: 10px;
+        }
+
+        .sequence-line {
+            margin-bottom: 5px;
+            letter-spacing: 0.05em;
+        }
+        
+        .domain-visual-container {
+            width: 100%;
+            overflow-x: auto;
+            padding: 20px 0;
+        }
+        
+        .domain-card {
+            transition: all 0.2s;
+        }
+        
+        .domain-card:hover {
+            box-shadow: 0 0.125rem 0.25rem rgba(0, 0, 0, 0.075);
+            border-color: #0d6efd;
+        }
+        
+        .binding-metrics .progress {
+            height: 25px;
+        }
+        
+        .binding-metrics .progress-bar {
+            text-align: left;
+            padding-left: 10px;
+        }
+        
+        .protein-domain {
+            cursor: pointer;
+            transition: opacity 0.2s;
+        }
+        
+        .protein-domain:hover {
+            opacity: 0.8;
+        }
+        
+        .domain-tooltip {
+            position: absolute;
+            background-color: rgba(255, 255, 255, 0.95);
+            border: 1px solid #ddd;
+            border-radius: 4px;
+            padding: 8px;
+            font-size: 0.8rem;
+            pointer-events: none;
+            z-index: 100;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+            max-width: 300px;
+        }
+        
+        /* Bind level indicators */
+        .bind-SB {
+            background-color: #28a745;
+            color: white;
+        }
+        
+        .bind-WB {
+            background-color: #ffc107;
+            color: black;
+        }
+        
+        .bind-NB {
+            background-color: #dc3545;
+            color: white;
+        }
+        
+        .section-title {
+            border-bottom: 2px solid #f0f0f0;
+            padding-bottom: 8px;
+            margin-bottom: 16px;
+        }
+        
+        /* Related sequences */
+        .related-sequence-card {
+            transition: all 0.2s;
+            cursor: pointer;
+        }
+        
+        .related-sequence-card:hover {
+            transform: translateY(-3px);
+            box-shadow: 0 4px 6px rgba(0,0,0,0.1);
+        }
+        
+        /* Tabs styling */
+        .nav-tabs .nav-link.active {
+            border-bottom: 3px solid #0d6efd;
+            font-weight: 500;
+        }
+    </style>
+</head>
+<body>
+    <nav class="navbar navbar-expand-lg navbar-dark bg-dark">
+        <div class="container-fluid">
+            <a class="navbar-brand" href="/">Mimic Identification Pipeline</a>
+            <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#navbarNav" aria-controls="navbarNav" aria-expanded="false" aria-label="Toggle navigation">
+                <span class="navbar-toggler-icon"></span>
+            </button>
+            <div class="collapse navbar-collapse" id="navbarNav">
+                <ul class="navbar-nav">
+                    <li class="nav-item">
+                        <a class="nav-link" href="/">Home</a>
+                    </li>
+                    <li class="nav-item">
+                        <a class="nav-link" href="/domain_enrichment">Domain Enrichment</a>
+                    </li>
+                </ul>
+            </div>
+            <span class="navbar-text">
+                Sample: <span id="sample-id">{{ sample_id }}</span>
+            </span>
+        </div>
+    </nav>
+
+    <div class="container mt-4 mb-5">
+        <div class="row">
+            <div class="col-12">
+                <!-- Header Section -->
+                <div class="card mb-4">
+                    <div class="card-header bg-light">
+                        <div class="d-flex justify-content-between align-items-center">
+                            <h4 class="mb-0">
+                                <i class="bi bi-file-earmark-text"></i> 
+                                Sequence Analysis: {{ sequence_id }}
+                            </h4>
+                            <a href="/" class="btn btn-outline-primary">
+                                <i class="bi bi-arrow-left"></i> Back to Main View
+                            </a>
+                        </div>
+                    </div>
+                    <div class="card-body">
+                        <div class="row">
+                            <!-- Basic Info Section -->
+                            <div class="col-md-6">
+                                <h5 class="section-title">
+                                    <i class="bi bi-info-circle"></i> Basic Information
+                                </h5>
+                                <table class="table table-bordered">
+                                    <tbody>
+                                        {% for key, value in basic_info.items() %}
+                                        <tr>
+                                            <th class="table-light" style="width: 40%">{{ key }}</th>
+                                            <td>
+                                                {% if key == 'Sequence Length' %}
+                                                {{ value }} aa
+                                                {% else %}
+                                                {{ value }}
+                                                {% endif %}
+                                            </td>
+                                        </tr>
+                                        {% endfor %}
+                                    </tbody>
+                                </table>
+                            </div>
+                            
+                            <!-- Summary Metrics -->
+                            <div class="col-md-6">
+                                <h5 class="section-title">
+                                    <i class="bi bi-graph-up"></i> Binding Metrics
+                                </h5>
+                                <div class="binding-metrics">
+                                    {% if binding_data %}
+                                    <div class="mb-3">
+                                        <label class="form-label d-flex justify-content-between">
+                                            <span>Binding Distribution</span>
+                                        </label>
+                                        <div id="binding-distribution" style="height: 200px;"></div>
+                                    </div>
+                                    {% else %}
+                                    <div class="alert alert-light">
+                                        <i class="bi bi-exclamation-triangle-fill text-warning"></i>
+                                        No binding data available for this sequence.
+                                    </div>
+                                    {% endif %}
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                
+                <!-- Domain Architecture Visualization -->
+                <div class="card mb-4">
+                    <div class="card-header">
+                        <h5 class="mb-0">
+                            <i class="bi bi-box"></i> Domain Architecture
+                        </h5>
+                    </div>
+                    <div class="card-body">
+                        <div class="domain-visual-container">
+                            <div id="domain-visual" style="min-height: 220px;">
+                                <!-- Domain visualization will be added by JavaScript -->
+                            </div>
+                        </div>
+                        
+                        <!-- Binding Position Histogram -->
+                        <div class="mt-4">
+                            <h6 class="mb-2">Binding Position Histogram</h6>
+                            <div id="binding-position-histogram" style="min-height: 150px; width: 100%;">
+                                <!-- Binding position histogram will be added by JavaScript -->
+                            </div>
+                        </div>
+                        
+                        <!-- Full Protein Sequence Section -->
+                        <div class="mt-4">
+                            <h6 class="mb-2">Protein Sequence</h6>
+                            {% if sequence %}
+                            <div class="d-flex justify-content-between align-items-center mb-2">
+                                <div class="text-muted small">
+                                    <span class="badge bg-secondary">{{ sequence|length }} amino acids</span>
+                                </div>
+                                <div>
+                                    <button class="btn btn-sm btn-outline-primary me-2" id="copy-sequence">
+                                        <i class="bi bi-clipboard"></i> Copy
+                                    </button>
+                                    <button class="btn btn-sm btn-outline-success me-2" id="download-sequence">
+                                        <i class="bi bi-download"></i> Download FASTA
+                                    </button>
+                                    <button class="btn btn-sm btn-outline-secondary" id="toggle-sequence">
+                                        <i class="bi bi-eye"></i> Show/Hide
+                                    </button>
+                                </div>
+                            </div>
+                            <div class="sequence-display p-3 border rounded bg-light" id="sequence-display" style="display: none;">
+                                <pre id="sequence-content" style="white-space: pre-wrap; word-break: keep-all; font-family: 'Courier New', monospace; margin: 0; padding: 0; background: transparent; border: none;"></pre>
+                                <input type="hidden" id="raw-sequence" value="{{ sequence }}">
+                            </div>
+                            {% else %}
+                            <div class="alert alert-info">
+                                <i class="bi bi-info-circle-fill"></i> 
+                                Full protein sequence is not available for this entry.
+                            </div>
+                            {% endif %}
+                        </div>
+                    </div>
+                </div>
+                
+                <!-- Domain Details -->
+                <div class="card mb-4">
+                    <div class="card-header">
+                        <ul class="nav nav-tabs card-header-tabs" id="domain-tabs" role="tablist">
+                            <li class="nav-item" role="presentation">
+                                <button class="nav-link active" id="pfam-tab" data-bs-toggle="tab" 
+                                    data-bs-target="#pfam-content" type="button" role="tab" 
+                                    aria-controls="pfam-content" aria-selected="true">
+                                    PFAM Mimics ({{ pfam_domains|length }})
+                                </button>
+                            </li>
+                            <li class="nav-item" role="presentation">
+                                <button class="nav-link" id="kofam-tab" data-bs-toggle="tab" 
+                                    data-bs-target="#kofam-content" type="button" role="tab" 
+                                    aria-controls="kofam-content" aria-selected="false">
+                                    KOFAM Mimics ({{ kofam_domains|length }})
+                                </button>
+                            </li>
+                            <li class="nav-item" role="presentation">
+                                <button class="nav-link" id="pfam-meta-tab" data-bs-toggle="tab" 
+                                    data-bs-target="#pfam-meta-content" type="button" role="tab" 
+                                    aria-controls="pfam-meta-content" aria-selected="false">
+                                    PFAM Metagenome ({{ pfam_metagenome_domains|default([])|length }})
+                                </button>
+                            </li>
+                            <li class="nav-item" role="presentation">
+                                <button class="nav-link" id="kofam-meta-tab" data-bs-toggle="tab" 
+                                    data-bs-target="#kofam-meta-content" type="button" role="tab" 
+                                    aria-controls="kofam-meta-content" aria-selected="false">
+                                    KOFAM Metagenome ({{ kofam_metagenome_domains|default([])|length }})
+                                </button>
+                            </li>
+                        </ul>
+                    </div>
+                    <div class="card-body">
+                        <div class="tab-content" id="domain-tabs-content">
+                            <div class="tab-pane fade show active" id="pfam-content" role="tabpanel" aria-labelledby="pfam-tab">
+                                {% if pfam_domains %}
+                                <div class="row domain-list">
+                                    {% for domain in pfam_domains %}
+                                    <div class="col-lg-6 col-xl-4 mb-3">
+                                        <div class="domain-card p-3 border rounded h-100" data-domain-id="{{ domain.hmm_name }}">
+                                            <h6>{{ domain.hmm_name }}</h6>
+                                            <div class="text-muted small mb-2">Position: {{ domain.start }} - {{ domain.end }}</div>
+                                            <table class="table table-sm">
+                                                <tbody>
+                                                    <tr>
+                                                        <th>Bit Score</th>
+                                                        <td>{{ domain.bitscore }}</td>
+                                                    </tr>
+                                                    <tr>
+                                                        <th>E-value</th>
+                                                        <td>{{ domain.e_value }}</td>
+                                                    </tr>
+                                                </tbody>
+                                            </table>
+                                            <div class="text-end mt-2">
+                                                <a href="http://pfam.xfam.org/family/{{ domain.hmm_name }}" class="btn btn-sm btn-outline-info" target="_blank">
+                                                    <i class="bi bi-box-arrow-up-right"></i> View in Pfam
+                                                </a>
+                                            </div>
+                                        </div>
+                                    </div>
+                                    {% endfor %}
+                                </div>
+                                {% else %}
+                                <div class="alert alert-light">
+                                    <i class="bi bi-info-circle-fill text-info"></i>
+                                    No PFAM domains found for this sequence.
+                                </div>
+                                {% endif %}
+                            </div>
+                            <div class="tab-pane fade" id="kofam-content" role="tabpanel" aria-labelledby="kofam-tab">
+                                {% if kofam_domains %}
+                                <div class="row domain-list">
+                                    {% for domain in kofam_domains %}
+                                    <div class="col-lg-6 col-xl-4 mb-3">
+                                        <div class="domain-card p-3 border rounded h-100" data-domain-id="{{ domain.hmm_name }}">
+                                            <h6>{{ domain.hmm_name }}</h6>
+                                            <div class="text-muted small mb-2">Position: {{ domain.start }} - {{ domain.end }}</div>
+                                            <table class="table table-sm">
+                                                <tbody>
+                                                    <tr>
+                                                        <th>Bit Score</th>
+                                                        <td>{{ domain.bitscore }}</td>
+                                                    </tr>
+                                                    <tr>
+                                                        <th>E-value</th>
+                                                        <td>{{ domain.e_value }}</td>
+                                                    </tr>
+                                                </tbody>
+                                            </table>
+                                            <div class="text-end mt-2">
+                                                <a href="https://www.genome.jp/dbget-bin/www_bget?ko:{{ domain.hmm_name }}" class="btn btn-sm btn-outline-info" target="_blank">
+                                                    <i class="bi bi-box-arrow-up-right"></i> View in KEGG
+                                                </a>
+                                            </div>
+                                        </div>
+                                    </div>
+                                    {% endfor %}
+                                </div>
+                                {% else %}
+                                <div class="alert alert-light">
+                                    <i class="bi bi-info-circle-fill text-info"></i>
+                                    No KOFAM domains found for this sequence.
+                                </div>
+                                {% endif %}
+                            </div>
+                            
+                            <div class="tab-pane fade" id="pfam-meta-content" role="tabpanel" aria-labelledby="pfam-meta-tab">
+                                {% if pfam_metagenome_domains and pfam_metagenome_domains|length > 0 %}
+                                <div class="row domain-list">
+                                    {% for domain in pfam_metagenome_domains %}
+                                    <div class="col-lg-6 col-xl-4 mb-3">
+                                        <div class="domain-card p-3 border rounded h-100" data-domain-id="{{ domain.hmm_name }}">
+                                            <h6>{{ domain.hmm_name }}</h6>
+                                            <div class="text-muted small mb-2">Position: {{ domain.start }} - {{ domain.end }}</div>
+                                            <table class="table table-sm">
+                                                <tbody>
+                                                    <tr>
+                                                        <th>Bit Score</th>
+                                                        <td>{{ domain.bitscore }}</td>
+                                                    </tr>
+                                                    <tr>
+                                                        <th>E-value</th>
+                                                        <td>{{ domain.e_value }}</td>
+                                                    </tr>
+                                                </tbody>
+                                            </table>
+                                            <div class="text-end mt-2">
+                                                <a href="http://pfam.xfam.org/family/{{ domain.hmm_name }}" class="btn btn-sm btn-outline-info" target="_blank">
+                                                    <i class="bi bi-box-arrow-up-right"></i> View in Pfam
+                                                </a>
+                                            </div>
+                                        </div>
+                                    </div>
+                                    {% endfor %}
+                                </div>
+                                {% else %}
+                                <div class="alert alert-light">
+                                    <i class="bi bi-info-circle-fill text-info"></i>
+                                    No PFAM metagenome domains found for this sequence.
+                                </div>
+                                {% endif %}
+                            </div>
+                            
+                            <div class="tab-pane fade" id="kofam-meta-content" role="tabpanel" aria-labelledby="kofam-meta-tab">
+                                {% if kofam_metagenome_domains and kofam_metagenome_domains|length > 0 %}
+                                <div class="row domain-list">
+                                    {% for domain in kofam_metagenome_domains %}
+                                    <div class="col-lg-6 col-xl-4 mb-3">
+                                        <div class="domain-card p-3 border rounded h-100" data-domain-id="{{ domain.hmm_name }}">
+                                            <h6>{{ domain.hmm_name }}</h6>
+                                            <div class="text-muted small mb-2">Position: {{ domain.start }} - {{ domain.end }}</div>
+                                            <table class="table table-sm">
+                                                <tbody>
+                                                    <tr>
+                                                        <th>Bit Score</th>
+                                                        <td>{{ domain.bitscore }}</td>
+                                                    </tr>
+                                                    <tr>
+                                                        <th>E-value</th>
+                                                        <td>{{ domain.e_value }}</td>
+                                                    </tr>
+                                                </tbody>
+                                            </table>
+                                            <div class="text-end mt-2">
+                                                <a href="https://www.genome.jp/dbget-bin/www_bget?ko:{{ domain.hmm_name }}" class="btn btn-sm btn-outline-info" target="_blank">
+                                                    <i class="bi bi-box-arrow-up-right"></i> View in KEGG
+                                                </a>
+                                            </div>
+                                        </div>
+                                    </div>
+                                    {% endfor %}
+                                </div>
+                                {% else %}
+                                <div class="alert alert-light">
+                                    <i class="bi bi-info-circle-fill text-info"></i>
+                                    No KOFAM metagenome domains found for this sequence.
+                                </div>
+                                {% endif %}
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                
+                <!-- Binding Data -->
+                <div class="card mb-4">
+                    <div class="card-header">
+                        <div class="d-flex justify-content-between align-items-center">
+                            <h5 class="mb-0">
+                                <i class="bi bi-clipboard-data"></i> Binding Data
+                            </h5>
+                            {% if binding_data %}
+                            <div>
+                                <button class="btn btn-sm btn-outline-primary" id="toggle-filters-btn">
+                                    <i class="bi bi-funnel"></i> Filters
+                                </button>
+                                <button class="btn btn-sm btn-outline-success ms-2" id="export-binding-csv">
+                                    <i class="bi bi-download"></i> Export CSV
+                                </button>
+                            </div>
+                            {% endif %}
+                        </div>
+                    </div>
+                    <div class="card-body">
+                        {% if binding_data %}
+                            <div class="alert alert-info mb-3">
+                                <i class="bi bi-info-circle-fill"></i> 
+                                <strong>Binding Level Legend:</strong> 
+                                <span class="badge bind-SB">SB</span> Strong Binder (<50 nM), 
+                                <span class="badge bind-WB">WB</span> Weak Binder (<500 nM), 
+                                <span class="badge bind-NB">NB</span> Non-Binder (>500 nM)
+                            </div>
+                            
+                            <!-- Filter Panel - initially hidden -->
+                            <div id="binding-filters" class="mb-4 p-3 border rounded bg-light" style="display:none;">
+                                <h6 class="mb-3">Filter Binding Data</h6>
+                                <div class="row g-3">
+                                    <!-- MHC Filter -->
+                                    <div class="col-md-4 col-lg-3">
+                                        <label class="form-label">MHC</label>
+                                        <select class="form-select form-select-sm" id="mhc-filter">
+                                            <option value="">All</option>
+                                            <!-- Will be filled dynamically -->
+                                        </select>
+                                    </div>
+                                    
+                                    <!-- Binding Level Filter -->
+                                    <div class="col-md-4 col-lg-3">
+                                        <label class="form-label">Binding Level</label>
+                                        <select class="form-select form-select-sm" id="bind-level-filter">
+                                            <option value="">All</option>
+                                            <option value="SB">Strong Binders</option>
+                                            <option value="WB">Weak Binders</option>
+                                            <option value="NB">Non-Binders</option>
+                                        </select>
+                                    </div>
+                                    
+                                    <!-- Affinity Filter -->
+                                    <div class="col-md-4 col-lg-3">
+                                        <label class="form-label">Max Affinity (nM)</label>
+                                        <input type="number" class="form-control form-control-sm" id="affinity-filter" placeholder="e.g., 500">
+                                    </div>
+                                    
+                                    <!-- Peptide Length Filter -->
+                                    <div class="col-md-4 col-lg-3">
+                                        <label class="form-label">Peptide Length</label>
+                                        <select class="form-select form-select-sm" id="peptide-length-filter">
+                                            <option value="">All</option>
+                                            <!-- Will be filled dynamically -->
+                                        </select>
+                                    </div>
+                                    
+                                    <!-- Position Range Filter -->
+                                    <div class="col-md-6 col-lg-4">
+                                        <label class="form-label">Position Range</label>
+                                        <div class="input-group input-group-sm">
+                                            <input type="number" class="form-control" id="position-start-filter" placeholder="Start">
+                                            <span class="input-group-text">to</span>
+                                            <input type="number" class="form-control" id="position-end-filter" placeholder="End">
+                                        </div>
+                                    </div>
+                                </div>
+                                
+                                <div class="d-flex justify-content-between mt-3">
+                                    <div>
+                                        <span class="badge bg-secondary" id="filter-count">0 matches</span>
+                                    </div>
+                                    <div>
+                                        <button class="btn btn-sm btn-outline-secondary" id="reset-filters-btn">
+                                            <i class="bi bi-x-circle"></i> Reset
+                                        </button>
+                                    </div>
+                                </div>
+                            </div>
+                            
+                            <!-- Binding data visualization -->
+                            <div class="row mb-4">
+                                <div class="col-md-6">
+                                    <div class="card">
+                                        <div class="card-header py-2">MHC Distribution</div>
+                                        <div class="card-body">
+                                            <div id="mhc-distribution-chart" style="height: 200px;"></div>
+                                        </div>
+                                    </div>
+                                </div>
+                                <div class="col-md-6">
+                                    <div class="card">
+                                        <div class="card-header py-2">Peptide Length Distribution</div>
+                                        <div class="card-body">
+                                            <div id="peptide-length-chart" style="height: 200px;"></div>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                            
+                            <!-- Binding Data Table -->
+                            <div class="table-responsive">
+                                <table class="table table-striped table-hover" id="binding-data-table">
+                                    <thead class="table-light">
+                                        <tr>
+                                            <th>MHC</th>
+                                            <th>Peptide</th>
+                                            <th>Length</th>
+                                            <th>Start Pos</th>
+                                            <th>End Pos</th>
+                                            <th>Score EL</th>
+                                            <th>%Rank EL</th>
+                                            <th>Aff(nM)</th>
+                                            <th>Bind Level</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody>
+                                        {% for binding in binding_data %}
+                                        <tr class="binding-row" 
+                                            data-mhc="{{ binding.MHC }}" 
+                                            data-peptide="{{ binding.mimic_Peptide }}" 
+                                            data-peptide-length="{{ binding.mimic_Peptide|length }}"
+                                            data-score="{{ binding.mimic_Score_EL }}"
+                                            data-rank="{{ binding['mimic_%Rank_EL'] }}"
+                                            data-affinity="{{ binding['mimic_Aff(nM)'] }}"
+                                            data-bind-level="{{ binding.mimic_BindLevel }}"
+                                            data-position-start="{{ binding.get('position_start', -1) }}"
+                                            data-position-end="{{ binding.get('position_end', -1) }}">
+                                            <td>{{ binding.MHC }}</td>
+                                            <td>{{ binding.mimic_Peptide }}</td>
+                                            <td>{{ binding.mimic_Peptide|length }}</td>
+                                            <td>{{ binding.get('position_start', '-') }}</td>
+                                            <td>{{ binding.get('position_end', '-') }}</td>
+                                            <td>{{ binding.mimic_Score_EL }}</td>
+                                            <td>{{ binding['mimic_%Rank_EL'] }}</td>
+                                            <td>{{ binding['mimic_Aff(nM)'] }}</td>
+                                            <td>
+                                                {% if binding.mimic_BindLevel is string and 'SB' in binding.mimic_BindLevel %}
+                                                <span class="badge bind-SB">{{ binding.mimic_BindLevel }}</span>
+                                                {% elif binding.mimic_BindLevel is string and 'WB' in binding.mimic_BindLevel %}
+                                                <span class="badge bind-WB">{{ binding.mimic_BindLevel }}</span>
+                                                {% else %}
+                                                <span class="badge bind-NB">{{ binding.mimic_BindLevel }}</span>
+                                                {% endif %}
+                                            </td>
+                                        </tr>
+                                        {% endfor %}
+                                    </tbody>
+                                </table>
+                            </div>
+                        {% else %}
+                        <div class="alert alert-light">
+                            <i class="bi bi-exclamation-triangle-fill text-warning"></i>
+                            No binding data found for this sequence.
+                        </div>
+                        {% endif %}
+                    </div>
+                </div>
+                
+                <!-- Cancer Association -->
+                <div class="card mb-4">
+                    <div class="card-header">
+                        <h5 class="mb-0">
+                            <i class="bi bi-link-45deg"></i> Cancer Association
+                        </h5>
+                    </div>
+                    <div class="card-body">
+                        <div class="row">
+                            <div class="col-md-6">
+                                <h6>Cancer Association Details</h6>
+                                <table class="table table-bordered">
+                                    <tbody>
+                                        <tr>
+                                            <th class="table-light">Cancer Accession</th>
+                                            <td>{{ raw_data.cancer_acc|default('N/A') }}</td>
+                                        </tr>
+                                        <tr>
+                                            <th class="table-light">Cancer Database</th>
+                                            <td>{{ raw_data.cancer_DB|default('N/A') }}</td>
+                                        </tr>
+                                        {% if raw_data.cancer_source_organism is defined %}
+                                        <tr>
+                                            <th class="table-light">Source Organism</th>
+                                            <td>{{ raw_data.cancer_source_organism }}</td>
+                                        </tr>
+                                        {% endif %}
+                                    </tbody>
+                                </table>
+                            </div>
+                            <div class="col-md-6">
+                                <div id="cancer-association-info">
+                                    <!-- Will be filled with JavaScript if external cancer data is available -->
+                                    <div class="alert alert-secondary">
+                                        <i class="bi bi-info-circle"></i>
+                                        External cancer database information will be integrated in a future update.
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                
+                <!-- Related Sequences -->
+                {% if related_sequences %}
+                <div class="card mb-4">
+                    <div class="card-header">
+                        <h5 class="mb-0">
+                            <i class="bi bi-diagram-3"></i> Related Sequences
+                        </h5>
+                    </div>
+                    <div class="card-body">
+                        <p class="text-muted mb-3">
+                            These sequences share domain similarities with {{ sequence_id }}.
+                        </p>
+                        <div class="row">
+                            {% for seq in related_sequences %}
+                            <div class="col-md-6 col-lg-4 mb-3">
+                                <div class="card related-sequence-card h-100">
+                                    <div class="card-body">
+                                        <h6 class="card-title text-truncate" title="{{ seq.id }}">{{ seq.id }}</h6>
+                                        <p class="card-text">
+                                            <span class="badge bg-primary">
+                                                Similarity Score: {{ seq.score }}
+                                            </span>
+                                        </p>
+                                    </div>
+                                    <div class="card-footer bg-transparent">
+                                        <a href="/sequence/{{ seq.id }}" class="btn btn-sm btn-outline-primary">
+                                            View Details
+                                        </a>
+                                    </div>
+                                </div>
+                            </div>
+                            {% endfor %}
+                        </div>
+                    </div>
+                </div>
+                {% endif %}
+            </div>
+        </div>
+    </div>
+
+    <!-- Load JS Libraries -->
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0-alpha1/dist/js/bootstrap.bundle.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/d3@7.8.2/dist/d3.min.js"></script>
+    
+    <!-- Load sequence detail script -->
+    <script src="{{ url_for('static', filename='js/sequence_detail.js') }}"></script>
+    
+    <script>
+        document.addEventListener('DOMContentLoaded', function() {
+            // Initialize the sequence detail page
+            initSequenceDetail({
+                sequenceId: "{{ sequence_id }}",
+                pfamDomains: {{ pfam_domains|tojson }},
+                kofamDomains: {{ kofam_domains|tojson }},
+                pfamMetagenomeDomains: {{ pfam_metagenome_domains|default([])|tojson }},
+                kofamMetagenomeDomains: {{ kofam_metagenome_domains|default([])|tojson }},
+                bindingData: {{ binding_data|tojson }},
+                bindingPositions: {{ binding_positions|default([])|tojson }},
+                sequence: "{{ sequence|default('') }}",
+                sequenceLength: {% if sequence %}{{ sequence|length }}{% else %}0{% endif %}
+            });
+            
+            // Format sequence in FASTA format
+            function formatSequence() {
+                const rawSequence = document.getElementById('raw-sequence').value;
+                const sequenceId = "{{ sequence_id }}";
+                const sequenceContent = document.getElementById('sequence-content');
+                const charsPerLine = 60; // Standard FASTA is 60 chars per line
+                
+                if (!rawSequence || !sequenceContent) {
+                    console.error("Missing sequence or container element");
+                    return;
+                }
+                
+                // Build FASTA format with detailed header
+                let fastaText = '>' + sequenceId + ' | length=' + rawSequence.length + ' amino acids\n';
+                
+                // Add sequence in chunks of charsPerLine
+                for (let i = 0; i < rawSequence.length; i += charsPerLine) {
+                    // Get a chunk of sequence
+                    const chunk = rawSequence.substring(i, i + charsPerLine);
+                    
+                    // Format sequence in groups of 10 with spaces
+                    let formattedLine = '';
+                    for (let j = 0; j < chunk.length; j += 10) {
+                        formattedLine += chunk.substring(j, Math.min(j + 10, chunk.length)) + ' ';
+                    }
+                    
+                    fastaText += formattedLine.trim() + '\n';
+                }
+                
+                // Set the formatted text to the pre element
+                sequenceContent.textContent = fastaText.trim();
+            }
+            
+            // Add toggle for sequence display
+            document.getElementById('toggle-sequence').addEventListener('click', function() {
+                const sequenceDisplay = document.getElementById('sequence-display');
+                if (sequenceDisplay.style.display === 'none') {
+                    sequenceDisplay.style.display = 'block';
+                    this.innerHTML = '<i class="bi bi-eye-slash"></i> Hide';
+                    formatSequence(); // Format the sequence when shown
+                } else {
+                    sequenceDisplay.style.display = 'none';
+                    this.innerHTML = '<i class="bi bi-eye"></i> Show';
+                }
+            });
+            
+            // Helper function to generate FASTA format
+            function generateFastaContent() {
+                const rawSequence = document.getElementById('raw-sequence').value;
+                const sequenceId = "{{ sequence_id }}";
+                const sequenceLength = rawSequence.length;
+                // Format: >ID | length=X amino acids
+                return '>' + sequenceId + ' | length=' + sequenceLength + ' amino acids\n' + rawSequence;
+            }
+            
+            // Add copy to clipboard functionality
+            const copyButton = document.getElementById('copy-sequence');
+            if (copyButton) {
+                copyButton.addEventListener('click', function() {
+                    const textToCopy = generateFastaContent();
+                    
+                    // Create a temporary textarea element to copy from
+                    const textarea = document.createElement('textarea');
+                    textarea.value = textToCopy;
+                    textarea.style.position = 'fixed';  // Prevent scrolling to the bottom
+                    document.body.appendChild(textarea);
+                    textarea.select();
+                    
+                    try {
+                        // Execute copy command
+                        const successful = document.execCommand('copy');
+                        
+                        // Update button to show success or failure
+                        if (successful) {
+                            copyButton.innerHTML = '<i class="bi bi-check"></i> Copied!';
+                            copyButton.classList.remove('btn-outline-primary');
+                            copyButton.classList.add('btn-success');
+                            
+                            // Reset button after 2 seconds
+                            setTimeout(function() {
+                                copyButton.innerHTML = '<i class="bi bi-clipboard"></i> Copy';
+                                copyButton.classList.remove('btn-success');
+                                copyButton.classList.add('btn-outline-primary');
+                            }, 2000);
+                        } else {
+                            copyButton.innerHTML = '<i class="bi bi-exclamation"></i> Failed';
+                            copyButton.classList.remove('btn-outline-primary');
+                            copyButton.classList.add('btn-danger');
+                            
+                            // Reset button after 2 seconds
+                            setTimeout(function() {
+                                copyButton.innerHTML = '<i class="bi bi-clipboard"></i> Copy';
+                                copyButton.classList.remove('btn-danger');
+                                copyButton.classList.add('btn-outline-primary');
+                            }, 2000);
+                        }
+                    } catch (err) {
+                        console.error('Error copying text:', err);
+                        copyButton.innerHTML = '<i class="bi bi-exclamation"></i> Failed';
+                    }
+                    
+                    // Remove the temporary element
+                    document.body.removeChild(textarea);
+                });
+            }
+            
+            // Add download FASTA functionality
+            const downloadButton = document.getElementById('download-sequence');
+            if (downloadButton) {
+                downloadButton.addEventListener('click', function() {
+                    const fastaContent = generateFastaContent();
+                    const sequenceId = "{{ sequence_id }}";
+                    const filename = sequenceId + '.fasta';
+                    
+                    // Create a blob with the FASTA content
+                    const blob = new Blob([fastaContent], {type: 'text/plain'});
+                    
+                    // Create a download link
+                    const a = document.createElement('a');
+                    a.href = URL.createObjectURL(blob);
+                    a.download = filename;
+                    
+                    // Trigger the download
+                    document.body.appendChild(a);
+                    a.click();
+                    
+                    // Clean up
+                    document.body.removeChild(a);
+                    URL.revokeObjectURL(a.href);
+                    
+                    // Provide feedback
+                    downloadButton.innerHTML = '<i class="bi bi-check"></i> Downloaded';
+                    downloadButton.classList.remove('btn-outline-success');
+                    downloadButton.classList.add('btn-success');
+                    
+                    // Reset button after 2 seconds
+                    setTimeout(function() {
+                        downloadButton.innerHTML = '<i class="bi bi-download"></i> Download FASTA';
+                        downloadButton.classList.remove('btn-success');
+                        downloadButton.classList.add('btn-outline-success');
+                    }, 2000);
+                });
+            }
+        });
+    </script>
+</body>
+</html>

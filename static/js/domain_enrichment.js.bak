@@ -1,0 +1,1538 @@
+// File: static/js/domain_enrichment.js
+// JavaScript for the domain enrichment page visualizations
+
+// Function to export a D3 visualization as a PNG image
+function exportChartAsPng(svgElement, fileName, buttonId) {
+    // Get the SVG element
+    const svg = svgElement;
+    if (!svg) {
+        console.error("SVG element not found");
+        return;
+    }
+    
+    // Create a canvas element
+    const canvas = document.createElement('canvas');
+    const bbox = svg.getBoundingClientRect();
+    canvas.width = bbox.width;
+    canvas.height = bbox.height;
+    
+    // Get the SVG data as a string with proper XML declaration
+    const svgData = new XMLSerializer().serializeToString(svg);
+    const svgBlob = new Blob([svgData], { type: 'image/svg+xml;charset=utf-8' });
+    const url = URL.createObjectURL(svgBlob);
+    
+    // Create an image from the SVG
+    const img = new Image();
+    img.onload = function() {
+        // Draw the image to the canvas
+        const ctx = canvas.getContext('2d');
+        ctx.fillStyle = 'white';
+        ctx.fillRect(0, 0, canvas.width, canvas.height);
+        ctx.drawImage(img, 0, 0);
+        
+        // Convert canvas to PNG
+        try {
+            const pngUrl = canvas.toDataURL('image/png');
+            
+            // Create download link
+            const downloadLink = document.createElement('a');
+            downloadLink.href = pngUrl;
+            downloadLink.download = fileName;
+            document.body.appendChild(downloadLink);
+            downloadLink.click();
+            document.body.removeChild(downloadLink);
+            
+            // Clean up
+            URL.revokeObjectURL(url);
+            
+            // Provide feedback if button ID provided
+            if (buttonId) {
+                const exportBtn = document.getElementById(buttonId);
+                if (exportBtn) {
+                    const originalText = exportBtn.innerHTML;
+                    exportBtn.innerHTML = '<i class="bi bi-check"></i> Downloaded';
+                    exportBtn.classList.remove('btn-outline-primary');
+                    exportBtn.classList.add('btn-success');
+                    
+                    // Reset button after 2 seconds
+                    setTimeout(() => {
+                        exportBtn.innerHTML = originalText;
+                        exportBtn.classList.remove('btn-success');
+                        exportBtn.classList.add('btn-outline-primary');
+                    }, 2000);
+                }
+            }
+        } catch (e) {
+            console.error("Error exporting PNG:", e);
+            alert("Failed to export image. See console for details.");
+        }
+    };
+    
+    img.onerror = function() {
+        console.error("Error loading SVG as image");
+        URL.revokeObjectURL(url);
+    };
+    
+    img.src = url;
+}
+
+// Initialize the domain enrichment page
+function initDomainEnrichment(data) {
+    // Extract data
+    const { 
+        pfamEnrichment, 
+        kofamEnrichment, 
+        pfamDepletion,
+        kofamDepletion,
+        pfamExclusive,
+        kofamExclusive,
+        pfamDomains, 
+        kofamDomains,
+        allEnrichmentData,
+        statistics,
+        bindingDomainsData,
+        defaultThresholds
+    } = data;
+    
+    // Store the original data for filtering
+    window.enrichmentData = {
+        pfamEnrichment,
+        kofamEnrichment,
+        pfamDepletion,
+        kofamDepletion,
+        pfamExclusive,
+        kofamExclusive,
+        pfamDomains,
+        kofamDomains,
+        allEnrichmentData,
+        statistics,
+        bindingDomainsData,
+        thresholds: defaultThresholds
+    };
+    
+    // Initialize visualizations
+    createDomainEnrichmentChart('pfam-enrichment-chart', pfamEnrichment, 'pfam-enrichment-count', true);
+    createDomainEnrichmentChart('pfam-depletion-chart', pfamDepletion, 'pfam-depletion-count', false);
+    createDomainEnrichmentChart('kofam-enrichment-chart', kofamEnrichment, 'kofam-enrichment-count', true);
+    createDomainEnrichmentChart('kofam-depletion-chart', kofamDepletion, 'kofam-depletion-count', false);
+    
+    // Populate domain tables
+    populateDomainTable('pfam-details-table', pfamDomains, 'pfam');
+    populateDomainTable('kofam-details-table', kofamDomains, 'kofam');
+    
+    // Initialize all domains table
+    initAllDomainsTable(allEnrichmentData);
+    
+    // Initialize binding domains visualization
+    if (bindingDomainsData && bindingDomainsData.domain_summaries) {
+        createBindingDomainsChart(bindingDomainsData.domain_summaries);
+    }
+    
+    // Add event listeners to exclusive domain tables
+    addExclusiveDomainsEventListeners();
+    
+    // Initialize threshold controls
+    initThresholdControls();
+    
+    // Initialize binding domains filter controls
+    initBindingDomainsFilters();
+}
+
+// Create domain enrichment chart
+function createDomainEnrichmentChart(containerId, domainData, countBadgeId, isEnriched) {
+    console.log(`Creating ${isEnriched ? 'enrichment' : 'depletion'} chart for ${containerId}`);
+    
+    const container = document.getElementById(containerId);
+    if (!container) {
+        console.log(`${containerId} container not found`);
+        return;
+    }
+    
+    // Clear container
+    container.innerHTML = '';
+    
+    // Add export button to the container
+    const exportButtonContainer = document.createElement('div');
+    exportButtonContainer.className = 'text-end mb-2';
+    exportButtonContainer.innerHTML = `
+        <button id="export-${containerId}-png" class="btn btn-outline-primary btn-sm">
+            <i class="bi bi-download"></i> Export as PNG
+        </button>
+    `;
+    container.appendChild(exportButtonContainer);
+    
+    // Create a wrapper for the SVG to allow exporting
+    const svgContainer = document.createElement('div');
+    svgContainer.id = `${containerId}-svg-container`;
+    container.appendChild(svgContainer);
+    
+    console.log(`Domain data for ${containerId}:`, domainData);
+    
+    if (!domainData || domainData.length === 0) {
+        console.log(`No domain data available for ${containerId}`);
+        svgContainer.innerHTML = `
+            <div class="alert alert-warning">
+                <p><strong>No domain ${isEnriched ? 'enrichment' : 'depletion'} data available.</strong></p>
+                <p>This could happen if:</p>
+                <ul>
+                    <li>There are no domains in this category</li>
+                    <li>The current filter settings are excluding relevant domains</li>
+                </ul>
+                <p>Try adjusting your filter thresholds or check the server logs for more information.</p>
+            </div>`;
+        return;
+    }
+    
+    // Update count badge
+    const countBadge = document.getElementById(countBadgeId);
+    if (countBadge) {
+        countBadge.textContent = `${domainData.length} domains`;
+    }
+    
+    // Limit to top 15 domains for better visualization
+    const topDomains = domainData
+        .slice(0, 15);
+    
+    // Set up dimensions
+    const margin = { top: 20, right: 120, bottom: 120, left: 200 };
+    const width = Math.max(300, container.clientWidth - margin.left - margin.right);
+    const height = Math.min(450, Math.max(300, topDomains.length * 30)); // Height depends on number of domains but capped
+    
+    // Create SVG
+    const svg = d3.select(`#${containerId}-svg-container`)
+        .append('svg')
+        .attr('width', width + margin.left + margin.right)
+        .attr('height', height + margin.top + margin.bottom)
+        .attr('id', `${containerId}-svg`)
+        .append('g')
+        .attr('transform', `translate(${margin.left},${margin.top})`);
+    
+    // Setup scales based on enrichment or depletion
+    let x, xRange;
+    if (isEnriched) {
+        // For enrichment: log scale starting at 1
+        x = d3.scaleLog()
+            .domain([1, Math.max(10, d3.max(topDomains, d => d.enrichment) * 1.1)])
+            .range([0, width]);
+    } else {
+        // For depletion: linear scale from 0 to 1
+        x = d3.scaleLinear()
+            .domain([0, 1])
+            .range([0, width]);
+    }
+    
+    // Add X axis
+    svg.append('g')
+        .attr('transform', `translate(0,${height})`)
+        .call(d3.axisBottom(x).ticks(5, isEnriched ? ',.1f' : '.1f'))
+        .selectAll('text')
+        .attr('transform', 'translate(-10,0)rotate(-45)')
+        .style('text-anchor', 'end');
+    
+    // X axis label
+    svg.append('text')
+        .attr('text-anchor', 'middle')
+        .attr('x', width / 2)
+        .attr('y', height + 60)
+        .text(`${isEnriched ? 'Enrichment' : 'Depletion'} Factor${isEnriched ? ' (log scale)' : ''}`);
+    
+    // Y axis
+    const y = d3.scaleBand()
+        .range([0, height])
+        .domain(topDomains.map(d => d.domain))
+        .padding(0.3);
+    
+    svg.append('g')
+        .call(d3.axisLeft(y));
+    
+    // Create tooltip
+    const tooltip = d3.select('body')
+        .append('div')
+        .attr('class', 'domain-tooltip')
+        .style('opacity', 0);
+    
+    // Add reference line
+    if (isEnriched) {
+        // Reference line at 1.0 (equal enrichment) for enrichment chart
+        svg.append('line')
+            .attr('class', 'reference-line')
+            .attr('x1', x(1))
+            .attr('x2', x(1))
+            .attr('y1', 0)
+            .attr('y2', height);
+    } else {
+        // Reference line at 1.0 (above chart) for depletion chart
+        svg.append('line')
+            .attr('class', 'reference-line')
+            .attr('x1', 0)
+            .attr('x2', width)
+            .attr('y1', -5)
+            .attr('y2', -5);
+            
+        // Add a label indicating 1.0 is above
+        svg.append('text')
+            .attr('x', width - 5)
+            .attr('y', -10)
+            .attr('text-anchor', 'end')
+            .attr('font-size', '12px')
+            .attr('fill', '#666')
+            .text('Reference line (1.0) is above chart');
+    }
+    
+    // Add bars
+    svg.selectAll('bars')
+        .data(topDomains)
+        .enter()
+        .append('rect')
+        .attr('class', `domain-bar ${isEnriched ? 'enriched' : 'depleted'}`)
+        .attr('y', d => y(d.domain))
+        .attr('height', y.bandwidth())
+        .attr('x', 0)
+        .attr('width', d => x(isEnriched ? d.enrichment : d.enrichment))
+        .on('mouseover', function(event, d) {
+            // Highlight the bar
+            d3.select(this).attr('opacity', 0.8);
+            
+            // Show tooltip
+            tooltip.transition()
+                .duration(200)
+                .style('opacity', 0.9);
+                
+            tooltip.html(`
+                <strong>${d.domain}</strong><br/>
+                ${isEnriched ? 'Enrichment' : 'Depletion'} Factor: ${d.enrichment.toFixed(2)}x<br/>
+                Target Count: ${d.target_count} (${(d.target_fraction * 100).toFixed(1)}%)<br/>
+                Background Count: ${d.background_count} (${(d.background_fraction * 100).toFixed(1)}%)<br/>
+                <small>Click for details</small>
+            `)
+            .style('left', (event.pageX + 10) + 'px')
+            .style('top', (event.pageY - 28) + 'px');
+        })
+        .on('mouseout', function() {
+            // Restore bar appearance
+            d3.select(this).attr('opacity', 1);
+            
+            // Hide tooltip
+            tooltip.transition()
+                .duration(500)
+                .style('opacity', 0);
+        })
+        .on('click', function(event, d) {
+            // Show domain-gene associations
+            showDomainAssociations(d.domain, isEnriched ? 'enriched' : 'depleted');
+        });
+    
+    // Add enrichment/depletion value labels
+    svg.selectAll('.label')
+        .data(topDomains)
+        .enter()
+        .append('text')
+        .attr('class', 'label')
+        .attr('y', d => y(d.domain) + y.bandwidth() / 2 + 4)
+        .attr('x', d => isEnriched ? 
+            x(d.enrichment) + 5 : 
+            x(d.enrichment) + 5)
+        .attr('text-anchor', 'start')
+        .text(d => d.enrichment.toFixed(2) + 'x');
+    
+    // Add chart title
+    svg.append('text')
+        .attr('x', width / 2)
+        .attr('y', -5)
+        .attr('text-anchor', 'middle')
+        .style('font-size', '14px')
+        .text(`Domain ${isEnriched ? 'Enrichment' : 'Depletion'} Analysis`);
+    
+    // Add event listener for the export button
+    document.getElementById(`export-${containerId}-png`).addEventListener('click', function() {
+        const fileName = `${containerId}.png`;
+        const svgElement = document.getElementById(`${containerId}-svg`);
+        exportChartAsPng(svgElement, fileName, `export-${containerId}-png`);
+    });
+}
+
+// Populate a domain table
+function populateDomainTable(tableId, domainData, type) {
+    const table = document.getElementById(tableId);
+    if (!table) return;
+    
+    // Get the table body
+    const tbody = table.querySelector('tbody');
+    tbody.innerHTML = '';
+    
+    if (!domainData || domainData.length === 0) {
+        const row = document.createElement('tr');
+        row.innerHTML = `<td colspan="5" class="text-center">No ${type.toUpperCase()} domains found.</td>`;
+        tbody.appendChild(row);
+        return;
+    }
+    
+    // Create rows for each domain
+    domainData.forEach(domain => {
+        const row = document.createElement('tr');
+        
+        row.innerHTML = `
+            <td>${domain.domain}</td>
+            <td>${domain.count}</td>
+            <td>${domain.avg_bitscore.toFixed(2)}</td>
+            <td>${domain.avg_evalue.toExponential(2)}</td>
+            <td>
+                <button class="btn btn-sm btn-outline-primary view-domain-btn" 
+                        data-domain="${domain.domain}">
+                    <i class="bi bi-search"></i> View
+                </button>
+                ${type === 'pfam' ? 
+                    `<a href="http://pfam.xfam.org/family/${domain.domain}" target="_blank" class="btn btn-sm btn-outline-info ms-1">
+                        <i class="bi bi-box-arrow-up-right"></i> Pfam
+                    </a>` :
+                    `<a href="https://www.genome.jp/dbget-bin/www_bget?ko:${domain.domain}" target="_blank" class="btn btn-sm btn-outline-info ms-1">
+                        <i class="bi bi-box-arrow-up-right"></i> KEGG
+                    </a>`
+                }
+            </td>
+        `;
+        
+        tbody.appendChild(row);
+    });
+    
+    // Add event listeners to view buttons
+    tbody.querySelectorAll('.view-domain-btn').forEach(btn => {
+        btn.addEventListener('click', function() {
+            const domainName = this.dataset.domain;
+            showDomainAssociations(domainName, type);
+        });
+    });
+}
+
+// Show domain-gene associations
+function showDomainAssociations(domainName, type) {
+    // Find domain info from the appropriate dataset
+    let domainData = null;
+    
+    if (type === 'pfam') {
+        domainData = window.enrichmentData.pfamDomains.find(d => d.domain === domainName);
+    } else if (type === 'kofam') {
+        domainData = window.enrichmentData.kofamDomains.find(d => d.domain === domainName);
+    } else if (type === 'enriched') {
+        // Try to find in PFAM enrichment data first
+        const pfamDomain = window.enrichmentData.pfamEnrichment.find(d => d.domain === domainName);
+        if (pfamDomain) {
+            domainData = window.enrichmentData.pfamDomains.find(d => d.domain === domainName);
+            type = 'pfam';
+        } else {
+            // Try KOFAM enrichment data
+            const kofamDomain = window.enrichmentData.kofamEnrichment.find(d => d.domain === domainName);
+            if (kofamDomain) {
+                domainData = window.enrichmentData.kofamDomains.find(d => d.domain === domainName);
+                type = 'kofam';
+            }
+        }
+    } else if (type === 'depleted') {
+        // Try to find in PFAM depletion data first
+        const pfamDomain = window.enrichmentData.pfamDepletion.find(d => d.domain === domainName);
+        if (pfamDomain) {
+            domainData = window.enrichmentData.pfamDomains.find(d => d.domain === domainName);
+            type = 'pfam';
+        } else {
+            // Try KOFAM depletion data
+            const kofamDomain = window.enrichmentData.kofamDepletion.find(d => d.domain === domainName);
+            if (kofamDomain) {
+                domainData = window.enrichmentData.kofamDomains.find(d => d.domain === domainName);
+                type = 'kofam';
+            }
+        }
+    }
+    
+    if (!domainData) {
+        console.error(`Domain data not found for ${domainName}`);
+        return;
+    }
+    
+    // Find enrichment/depletion info
+    let enrichmentInfo = window.enrichmentData.pfamEnrichment.find(d => d.domain === domainName);
+    if (!enrichmentInfo) {
+        enrichmentInfo = window.enrichmentData.kofamEnrichment.find(d => d.domain === domainName);
+    }
+    
+    if (!enrichmentInfo) {
+        enrichmentInfo = window.enrichmentData.pfamDepletion.find(d => d.domain === domainName);
+    }
+    
+    if (!enrichmentInfo) {
+        enrichmentInfo = window.enrichmentData.kofamDepletion.find(d => d.domain === domainName);
+    }
+    
+    // Show the domain associations card
+    const card = document.getElementById('domain-associations-card');
+    const title = document.getElementById('domain-associations-title');
+    const content = document.getElementById('domain-associations-content');
+    
+    if (!card || !title || !content) return;
+    
+    // Update title
+    title.innerHTML = `<i class="bi bi-diagram-3"></i> ${domainName} Domain Information`;
+    
+    // Prepare content with enrichment info if available
+    let enrichmentHtml = '';
+    if (enrichmentInfo) {
+        const isEnriched = enrichmentInfo.enrichment >= 1.0;
+        const enrichmentClass = isEnriched ? 'text-success' : 'text-danger';
+        const enrichmentIcon = isEnriched ? 'arrow-up-circle' : 'arrow-down-circle';
+        
+        enrichmentHtml = `
+            <div class="card mb-3">
+                <div class="card-header">
+                    <h6 class="mb-0">Enrichment Analysis</h6>
+                </div>
+                <div class="card-body">
+                    <div class="row">
+                        <div class="col-md-4 text-center">
+                            <div class="d-flex align-items-center justify-content-center">
+                                <i class="bi bi-${enrichmentIcon} fs-1 ${enrichmentClass} me-2"></i>
+                                <div class="fs-1 ${enrichmentClass}">${enrichmentInfo.enrichment.toFixed(2)}x</div>
+                            </div>
+                            <div class="stats-label">${isEnriched ? 'Enrichment' : 'Depletion'} Factor</div>
+                        </div>
+                        <div class="col-md-8">
+                            <table class="table table-bordered">
+                                <thead class="table-light">
+                                    <tr>
+                                        <th></th>
+                                        <th>Target (Better Binders)</th>
+                                        <th>Background (Metagenome)</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    <tr>
+                                        <th>Count</th>
+                                        <td>${enrichmentInfo.target_count}</td>
+                                        <td>${enrichmentInfo.background_count}</td>
+                                    </tr>
+                                    <tr>
+                                        <th>Fraction</th>
+                                        <td>${(enrichmentInfo.target_fraction * 100).toFixed(2)}%</td>
+                                        <td>${(enrichmentInfo.background_fraction * 100).toFixed(2)}%</td>
+                                    </tr>
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        `;
+    }
+    
+    // Prepare main content
+    let html = `
+        <div class="alert alert-info">
+            <i class="bi bi-info-circle"></i>
+            ${type.toUpperCase()} domain <strong>${domainName}</strong> is found in ${domainData.genes.length} mimic genes.
+        </div>
+        
+        ${enrichmentHtml}
+        
+        <div class="row">
+            <div class="col-md-6">
+                <h6>Associated Mimic Genes</h6>
+                <div class="domain-genes-list">
+    `;
+    
+    // Add gene links
+    domainData.genes.forEach(gene => {
+        html += `<a href="/sequence/${gene}" class="btn btn-sm btn-outline-secondary mimic-gene-link">${gene}</a>`;
+    });
+    
+    html += `
+                </div>
+            </div>
+            <div class="col-md-6">
+                <h6>Domain Information</h6>
+                <table class="table table-bordered">
+                    <tbody>
+                        <tr>
+                            <th class="table-light">Domain Type</th>
+                            <td>${type.toUpperCase()}</td>
+                        </tr>
+                        <tr>
+                            <th class="table-light">Domain ID</th>
+                            <td>${domainName}</td>
+                        </tr>
+                        <tr>
+                            <th class="table-light">Occurrence Count</th>
+                            <td>${domainData.count}</td>
+                        </tr>
+                        <tr>
+                            <th class="table-light">Avg. BitScore</th>
+                            <td>${domainData.avg_bitscore.toFixed(2)}</td>
+                        </tr>
+                        <tr>
+                            <th class="table-light">Avg. E-value</th>
+                            <td>${domainData.avg_evalue.toExponential(2)}</td>
+                        </tr>
+                    </tbody>
+                </table>
+                <div class="mt-3">
+                    ${type === 'pfam' ?
+                        `<a href="http://pfam.xfam.org/family/${domainName}" target="_blank" class="btn btn-outline-info">
+                            <i class="bi bi-box-arrow-up-right"></i> View in Pfam Database
+                        </a>` :
+                        `<a href="https://www.genome.jp/dbget-bin/www_bget?ko:${domainName}" target="_blank" class="btn btn-outline-info">
+                            <i class="bi bi-box-arrow-up-right"></i> View in KEGG Database
+                        </a>`
+                    }
+                </div>
+            </div>
+        </div>
+    `;
+    
+    // Update content
+    content.innerHTML = html;
+    
+    // Show the card
+    card.style.display = 'block';
+    
+    // Scroll to the card
+    card.scrollIntoView({ behavior: 'smooth', block: 'start' });
+}
+
+// Initialize threshold controls
+function initThresholdControls() {
+    const applyBtn = document.getElementById('apply-thresholds');
+    if (!applyBtn) return;
+    
+    applyBtn.addEventListener('click', function() {
+        // Get threshold values
+        const bitscoreThreshold = parseFloat(document.getElementById('bitscore-threshold').value);
+        const evalueThreshold = parseFloat(document.getElementById('evalue-threshold').value);
+        const countThreshold = parseInt(document.getElementById('count-threshold').value);
+        const enrichmentThreshold = parseFloat(document.getElementById('enrichment-threshold').value);
+        
+        // Store updated thresholds
+        window.enrichmentData.thresholds = {
+            bitscore: bitscoreThreshold,
+            evalue: evalueThreshold,
+            count: countThreshold,
+            enrichment: enrichmentThreshold
+        };
+        
+        // Apply filtering
+        applyThresholds();
+    });
+}
+
+// Initialize all domains table
+function initAllDomainsTable(allData) {
+    const tableBody = document.getElementById('all-domains-table-body');
+    if (!tableBody) return;
+    
+    // Clear table
+    tableBody.innerHTML = '';
+    
+    // Check if we have data
+    if (!allData || !Array.isArray(allData) || allData.length === 0) {
+        const row = document.createElement('tr');
+        row.innerHTML = '<td colspan="9" class="text-center">No enrichment data available.</td>';
+        tableBody.appendChild(row);
+        return;
+    }
+    
+    // Add rows for each domain
+    allData.forEach(domain => {
+        const row = document.createElement('tr');
+        
+        // Status badge color
+        let statusBadge;
+        if (domain.status === 'Exclusive') {
+            statusBadge = '<span class="badge bg-warning">Exclusive</span>';
+        } else if (domain.status === 'Enriched') {
+            statusBadge = '<span class="badge bg-success">Enriched</span>';
+        } else {
+            statusBadge = '<span class="badge bg-danger">Depleted</span>';
+        }
+        
+        // Format enrichment value
+        let enrichmentDisplay;
+        if (domain.enrichment === Infinity) {
+            enrichmentDisplay = '<span class="badge bg-warning">∞</span>';
+        } else {
+            enrichmentDisplay = domain.enrichment.toFixed(2) + 'x';
+        }
+        
+        row.innerHTML = `
+            <td>${domain.domain}</td>
+            <td>${domain.domain_type}</td>
+            <td>${statusBadge}</td>
+            <td>${enrichmentDisplay}</td>
+            <td>${domain.target_count}</td>
+            <td>${domain.background_count}</td>
+            <td>${(domain.target_fraction * 100).toFixed(2)}%</td>
+            <td>${(domain.background_fraction * 100).toFixed(2)}%</td>
+            <td>
+                <button class="btn btn-sm btn-outline-primary view-domain-btn" 
+                        data-domain="${domain.domain}">
+                    <i class="bi bi-search"></i> View
+                </button>
+                ${domain.domain_type === 'PFAM' ? 
+                    `<a href="http://pfam.xfam.org/family/${domain.domain}" target="_blank" class="btn btn-sm btn-outline-info ms-1">
+                        <i class="bi bi-box-arrow-up-right"></i> Pfam
+                    </a>` :
+                    `<a href="https://www.genome.jp/dbget-bin/www_bget?ko:${domain.domain}" target="_blank" class="btn btn-sm btn-outline-info ms-1">
+                        <i class="bi bi-box-arrow-up-right"></i> KEGG
+                    </a>`
+                }
+            </td>
+        `;
+        
+        tableBody.appendChild(row);
+    });
+    
+    // Add event listeners to view buttons
+    tableBody.querySelectorAll('.view-domain-btn').forEach(btn => {
+        btn.addEventListener('click', function() {
+            const domainName = this.dataset.domain;
+            showDomainAssociations(domainName, 'table');
+        });
+    });
+    
+    // Add filter functionality
+    addTableFilterFunctionality();
+    
+    // Add export functionality
+    document.getElementById('export-table-btn').addEventListener('click', function() {
+        exportTableToCSV('all-domains-table', 'domain_enrichment_data.csv');
+    });
+}
+
+// Add filter functionality to the all domains table
+function addTableFilterFunctionality() {
+    const filterButtons = document.querySelectorAll('.dropdown-menu .dropdown-item');
+    
+    filterButtons.forEach(button => {
+        button.addEventListener('click', function(e) {
+            e.preventDefault();
+            
+            // Get filter value
+            const filter = this.dataset.filter;
+            
+            // Get all rows
+            const rows = document.querySelectorAll('#all-domains-table tbody tr');
+            
+            // Filter rows based on selection
+            rows.forEach(row => {
+                const cells = row.querySelectorAll('td');
+                if (cells.length === 0) return;
+                
+                const domainType = cells[1].textContent;
+                const status = cells[2].textContent.trim();
+                
+                if (filter === 'all') {
+                    row.style.display = '';
+                } else if (filter === 'PFAM' || filter === 'KOFAM') {
+                    row.style.display = domainType === filter ? '' : 'none';
+                } else if (filter === 'Exclusive' || filter === 'Enriched' || filter === 'Depleted') {
+                    row.style.display = status.includes(filter) ? '' : 'none';
+                } else {
+                    row.style.display = '';
+                }
+            });
+            
+            // Update dropdown button text
+            document.getElementById('filterDropdown').innerHTML = `<i class="bi bi-funnel"></i> Filter: ${filter === 'all' ? 'All' : filter}`;
+        });
+    });
+}
+
+// Export table data to CSV file
+function exportTableToCSV(tableId, filename) {
+    const table = document.getElementById(tableId);
+    if (!table) return;
+    
+    const rows = table.querySelectorAll('tr:not([style*="display: none"])');
+    let csvContent = "data:text/csv;charset=utf-8,";
+    
+    // Get header row
+    const headerRow = table.querySelector('thead tr');
+    const headers = headerRow.querySelectorAll('th');
+    const headerArray = [];
+    
+    headers.forEach(header => {
+        headerArray.push('"' + header.textContent + '"');
+    });
+    
+    // Remove last column (Actions)
+    headerArray.pop();
+    
+    csvContent += headerArray.join(',') + '\r\n';
+    
+    // Get data rows
+    rows.forEach(row => {
+        if (row.parentElement.tagName === 'THEAD') return;
+        
+        const cells = row.querySelectorAll('td');
+        if (cells.length === 0) return;
+        
+        const rowArray = [];
+        
+        cells.forEach((cell, index) => {
+            // Skip actions column
+            if (index === cells.length - 1) return;
+            
+            // Clean up cell content - remove HTML tags
+            let cellContent = cell.textContent.trim();
+            
+            // Handle special case for status badges
+            if (index === 2) {
+                cellContent = cellContent.replace(/(\r\n|\n|\r|\s+)/gm, "");
+            }
+            
+            rowArray.push('"' + cellContent + '"');
+        });
+        
+        csvContent += rowArray.join(',') + '\r\n';
+    });
+    
+    // Create download link
+    const encodedUri = encodeURI(csvContent);
+    const link = document.createElement('a');
+    link.setAttribute('href', encodedUri);
+    link.setAttribute('download', filename);
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+}
+
+// Add event listeners to exclusive domains tables
+function addExclusiveDomainsEventListeners() {
+    // Add event listeners to PFAM exclusive domains table
+    const pfamTable = document.getElementById('pfam-exclusive-table');
+    if (pfamTable) {
+        const buttons = pfamTable.querySelectorAll('.view-domain-btn');
+        buttons.forEach(btn => {
+            btn.addEventListener('click', function() {
+                const domainName = this.dataset.domain;
+                showDomainAssociations(domainName, 'exclusive');
+            });
+        });
+    }
+    
+    // Add event listeners to KOFAM exclusive domains table
+    const kofamTable = document.getElementById('kofam-exclusive-table');
+    if (kofamTable) {
+        const buttons = kofamTable.querySelectorAll('.view-domain-btn');
+        buttons.forEach(btn => {
+            btn.addEventListener('click', function() {
+                const domainName = this.dataset.domain;
+                showDomainAssociations(domainName, 'exclusive');
+            });
+        });
+    }
+}
+
+// Create binding domains visualization
+function createBindingDomainsChart(domainData) {
+    console.log("Creating binding domains chart");
+    
+    if (!domainData || domainData.length === 0) {
+        console.log("No binding domains data available");
+        document.getElementById('binding-domains-chart').innerHTML = `
+            <div class="alert alert-warning">
+                <p><strong>No binding domains data available.</strong></p>
+                <p>This could be because no domains contain binding peptides with current filter settings.</p>
+            </div>`;
+        return;
+    }
+    
+    const container = document.getElementById('binding-domains-chart');
+    if (!container) {
+        console.log("Binding domains chart container not found");
+        return;
+    }
+    
+    // Clear container
+    container.innerHTML = '';
+    
+    // Add export button
+    const exportButtonContainer = document.createElement('div');
+    exportButtonContainer.className = 'text-end mb-2';
+    exportButtonContainer.innerHTML = `
+        <button id="export-binding-domains-chart-png" class="btn btn-outline-primary btn-sm">
+            <i class="bi bi-download"></i> Export as PNG
+        </button>
+    `;
+    container.appendChild(exportButtonContainer);
+    
+    // Create a wrapper for the SVG
+    const svgContainer = document.createElement('div');
+    svgContainer.id = 'binding-domains-chart-svg-container';
+    container.appendChild(svgContainer);
+    
+    // Limit to top domains for better visualization
+    const topDomains = domainData
+        .sort((a, b) => b.binding_count - a.binding_count)
+        .slice(0, 15);
+    
+    // Set up dimensions
+    const margin = { top: 20, right: 120, bottom: 120, left: 200 };
+    const width = Math.max(300, container.clientWidth - margin.left - margin.right);
+    const height = Math.min(450, Math.max(300, topDomains.length * 30));
+    
+    // Create SVG
+    const svg = d3.select('#binding-domains-chart-svg-container')
+        .append('svg')
+        .attr('width', width + margin.left + margin.right)
+        .attr('height', height + margin.top + margin.bottom)
+        .attr('id', 'binding-domains-chart-svg')
+        .append('g')
+        .attr('transform', `translate(${margin.left},${margin.top})`);
+    
+    // X scale - linear based on binding count
+    const x = d3.scaleLinear()
+        .domain([0, d3.max(topDomains, d => d.binding_count) * 1.1])
+        .range([0, width]);
+    
+    // Add X axis
+    svg.append('g')
+        .attr('transform', `translate(0,${height})`)
+        .call(d3.axisBottom(x).ticks(5))
+        .selectAll('text')
+        .attr('transform', 'translate(-10,0)rotate(-45)')
+        .style('text-anchor', 'end');
+    
+    // X axis label
+    svg.append('text')
+        .attr('text-anchor', 'middle')
+        .attr('x', width / 2)
+        .attr('y', height + 60)
+        .text('Number of Binding Peptides');
+    
+    // Y axis
+    const y = d3.scaleBand()
+        .range([0, height])
+        .domain(topDomains.map(d => d.domain))
+        .padding(0.3);
+    
+    svg.append('g')
+        .call(d3.axisLeft(y));
+    
+    // Create tooltip
+    const tooltip = d3.select('body')
+        .append('div')
+        .attr('class', 'domain-tooltip')
+        .style('opacity', 0);
+    
+    // Add bars
+    svg.selectAll('bars')
+        .data(topDomains)
+        .enter()
+        .append('rect')
+        .attr('class', 'domain-bar enriched')
+        .attr('y', d => y(d.domain))
+        .attr('height', y.bandwidth())
+        .attr('x', 0)
+        .attr('width', d => x(d.binding_count))
+        .on('mouseover', function(event, d) {
+            // Highlight the bar
+            d3.select(this).attr('opacity', 0.8);
+            
+            // Show tooltip
+            tooltip.transition()
+                .duration(200)
+                .style('opacity', 0.9);
+                
+            tooltip.html(`
+                <strong>${d.domain}</strong><br/>
+                Binding Count: ${d.binding_count}<br/>
+                Sequence Count: ${d.sequence_count}<br/>
+                Avg. Affinity: ${d.avg_affinity.toFixed(1)} nM<br/>
+                <small>Click for details</small>
+            `)
+            .style('left', (event.pageX + 10) + 'px')
+            .style('top', (event.pageY - 28) + 'px');
+        })
+        .on('mouseout', function() {
+            // Restore bar appearance
+            d3.select(this).attr('opacity', 1);
+            
+            // Hide tooltip
+            tooltip.transition()
+                .duration(500)
+                .style('opacity', 0);
+        })
+        .on('click', function(event, d) {
+            // Show domain-gene associations
+            showBindingDomainDetails(d.domain);
+        });
+    
+    // Add value labels
+    svg.selectAll('.label')
+        .data(topDomains)
+        .enter()
+        .append('text')
+        .attr('class', 'label')
+        .attr('y', d => y(d.domain) + y.bandwidth() / 2 + 4)
+        .attr('x', d => x(d.binding_count) + 5)
+        .attr('text-anchor', 'start')
+        .text(d => d.binding_count);
+    
+    // Add chart title
+    svg.append('text')
+        .attr('x', width / 2)
+        .attr('y', -5)
+        .attr('text-anchor', 'middle')
+        .style('font-size', '14px')
+        .text('PFAM Domains Containing Binding Peptides');
+    
+    // Add event listener for the export button
+    document.getElementById('export-binding-domains-chart-png').addEventListener('click', function() {
+        const fileName = 'binding_domains_chart.png';
+        const svgElement = document.getElementById('binding-domains-chart-svg');
+        exportChartAsPng(svgElement, fileName, 'export-binding-domains-chart-png');
+    });
+    
+    // Add event listener for CSV export
+    document.getElementById('export-binding-domains-csv').addEventListener('click', function() {
+        exportBindingDomainsToCSV(domainData, 'binding_domains.csv');
+    });
+}
+
+// Show binding domain details
+function showBindingDomainDetails(domainName) {
+    // Find domain data
+    const domainData = window.enrichmentData.bindingDomainsData.domain_summaries.find(d => d.domain === domainName);
+    
+    if (!domainData) {
+        console.error(`Domain data not found for binding domain ${domainName}`);
+        return;
+    }
+    
+    // Get domain details from the domain maps if available
+    let pfamDomainInfo = window.enrichmentData.pfamDomains.find(d => d.domain === domainName);
+    
+    // Show the domain associations card
+    const card = document.getElementById('domain-associations-card');
+    const title = document.getElementById('domain-associations-title');
+    const content = document.getElementById('domain-associations-content');
+    
+    if (!card || !title || !content) return;
+    
+    // Update title
+    title.innerHTML = `<i class="bi bi-diagram-3"></i> ${domainName} - Binding Domain Details`;
+    
+    // Prepare content
+    let html = `
+        <div class="alert alert-info">
+            <i class="bi bi-info-circle"></i>
+            PFAM domain <strong>${domainName}</strong> contains ${domainData.binding_count} binding peptides in ${domainData.sequence_count} sequences.
+        </div>
+        
+        <div class="card mb-3">
+            <div class="card-header">
+                <h6 class="mb-0">Binding Statistics</h6>
+            </div>
+            <div class="card-body">
+                <div class="row">
+                    <div class="col-md-4 text-center">
+                        <div class="fs-1 text-primary">${domainData.binding_count}</div>
+                        <div class="stats-label">Binding Peptides</div>
+                    </div>
+                    <div class="col-md-4 text-center">
+                        <div class="fs-1 text-success">${domainData.avg_affinity.toFixed(1)} nM</div>
+                        <div class="stats-label">Average Affinity</div>
+                    </div>
+                    <div class="col-md-4 text-center">
+                        <div class="fs-1 text-info">${domainData.pct_of_sequences.toFixed(1)}%</div>
+                        <div class="stats-label">% of Binding Sequences</div>
+                    </div>
+                </div>
+            </div>
+        </div>
+        
+        <div class="row">
+            <div class="col-md-6">
+                <h6>Associated Binding Sequences</h6>
+                <div class="domain-genes-list">
+    `;
+    
+    // Add sequence links
+    domainData.sequences.forEach(sequence => {
+        html += `<a href="/sequence/${sequence}" class="btn btn-sm btn-outline-secondary mimic-gene-link">${sequence}</a>`;
+    });
+    
+    html += `
+                </div>
+            </div>
+            <div class="col-md-6">
+                <h6>Domain Information</h6>
+                <table class="table table-bordered">
+                    <tbody>
+                        <tr>
+                            <th class="table-light">Domain Type</th>
+                            <td>PFAM</td>
+                        </tr>
+                        <tr>
+                            <th class="table-light">Domain ID</th>
+                            <td>${domainName}</td>
+                        </tr>
+                        <tr>
+                            <th class="table-light">Binding Count</th>
+                            <td>${domainData.binding_count}</td>
+                        </tr>
+                        <tr>
+                            <th class="table-light">Sequence Count</th>
+                            <td>${domainData.sequence_count}</td>
+                        </tr>
+                        <tr>
+                            <th class="table-light">Avg. BitScore</th>
+                            <td>${domainData.avg_bitscore.toFixed(2)}</td>
+                        </tr>
+                        <tr>
+                            <th class="table-light">Avg. Affinity (nM)</th>
+                            <td>${domainData.avg_affinity.toFixed(2)}</td>
+                        </tr>
+                    </tbody>
+                </table>
+                <div class="mt-3">
+                    <a href="http://pfam.xfam.org/family/${domainName}" target="_blank" class="btn btn-outline-info">
+                        <i class="bi bi-box-arrow-up-right"></i> View in Pfam Database
+                    </a>
+                </div>
+            </div>
+        </div>
+    `;
+    
+    // Update content
+    content.innerHTML = html;
+    
+    // Show the card
+    card.style.display = 'block';
+    
+    // Scroll to the card
+    card.scrollIntoView({ behavior: 'smooth', block: 'start' });
+}
+
+// Initialize binding domains filter controls
+function initBindingDomainsFilters() {
+    // Initialize run analysis button
+    const runBtn = document.getElementById('run-binding-analysis');
+    if (!runBtn) return;
+    
+    runBtn.addEventListener('click', function() {
+        // Get filter values
+        const affinityThreshold = parseFloat(document.getElementById('binding-affinity-threshold').value);
+        const bindingLevel = document.getElementById('binding-level-filter').value;
+        
+        // Get max sequences - hardcoded for now, could be made configurable
+        const maxSequences = 2000;
+        
+        // Hide run button and show progress bar
+        document.getElementById('binding-domains-run-card').style.display = 'none';
+        document.getElementById('binding-domains-progress-card').style.display = 'block';
+        
+        // Generate a session ID for this analysis
+        const sessionId = Date.now().toString();
+        
+        // Start analysis with progress tracking
+        fetch('/api/binding_domains_progress', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({
+                binding_threshold: affinityThreshold,
+                binding_level: bindingLevel,
+                max_sequences: maxSequences,
+                session_id: sessionId
+            })
+        })
+        .then(response => response.json())
+        .then(data => {
+            if (data.error) {
+                throw new Error(data.error);
+            }
+            
+            // Get the task ID and start polling for updates
+            const taskId = data.task_id;
+            pollTaskStatus(taskId);
+        })
+        .catch(error => {
+            console.error('Error starting binding domains analysis:', error);
+            // Show error in progress bar
+            document.getElementById('binding-domains-progress-status').innerHTML = 
+                `<div class="alert alert-danger">Error: ${error.message}</div>`;
+            document.getElementById('binding-domains-progress-bar').classList.remove('progress-bar-animated');
+            document.getElementById('binding-domains-progress-bar').classList.remove('bg-primary');
+            document.getElementById('binding-domains-progress-bar').classList.add('bg-danger');
+        });
+    });
+    
+    // Initialize filter button (only works after analysis has run)
+    const applyBtn = document.getElementById('apply-binding-filters');
+    if (!applyBtn) return;
+    
+    applyBtn.addEventListener('click', function() {
+        // Hide results and show progress
+        document.getElementById('binding-domains-results-card').style.display = 'none';
+        document.getElementById('binding-domains-table-card').style.display = 'none';
+        document.getElementById('binding-domains-progress-card').style.display = 'block';
+        
+        // Reset progress bar
+        updateProgressBar(0, 'Applying filters...');
+        
+        // Get filter values
+        const affinityThreshold = parseFloat(document.getElementById('binding-affinity-threshold').value);
+        const bindingLevel = document.getElementById('binding-level-filter').value;
+        
+        // Get max sequences - use a smaller number for filtering to be faster
+        const maxSequences = 1000;
+        
+        // Make API call to get filtered binding domains data
+        fetch(`/api/binding_domains?binding_threshold=${affinityThreshold}&binding_level=${bindingLevel}&max_sequences=${maxSequences}`)
+            .then(response => response.json())
+            .then(data => {
+                // Update stored binding domains data
+                window.enrichmentData.bindingDomainsData = data;
+                
+                // Hide progress and show results
+                document.getElementById('binding-domains-progress-card').style.display = 'none';
+                document.getElementById('binding-domains-results-card').style.display = 'block';
+                document.getElementById('binding-domains-table-card').style.display = 'block';
+                
+                // Update visualization
+                createBindingDomainsChart(data.domain_summaries);
+                
+                // Update the binding domains table
+                updateBindingDomainsTable(data.domain_summaries);
+                
+                // Update count badge
+                document.getElementById('binding-domains-badge').textContent = data.domain_summaries.length;
+                document.getElementById('binding-domains-count').textContent = `${data.domain_summaries.length} domains`;
+            })
+            .catch(error => {
+                console.error('Error fetching binding domains data:', error);
+                document.getElementById('binding-domains-progress-status').innerHTML = 
+                    `<div class="alert alert-danger">Error: ${error.message}</div>`;
+            });
+    });
+}
+
+// Poll for task status updates
+function pollTaskStatus(taskId) {
+    const pollInterval = 1000; // Poll every second
+    
+    function poll() {
+        fetch(`/api/binding_domains_status/${taskId}`)
+            .then(response => response.json())
+            .then(data => {
+                if (data.error) {
+                    throw new Error(data.error);
+                }
+                
+                // Update progress bar
+                updateProgressBar(data.progress, getProgressStatusText(data.progress));
+                
+                if (data.status === 'completed') {
+                    // Analysis completed successfully
+                    handleCompletedAnalysis(data.result);
+                } else if (data.status === 'error') {
+                    // Analysis failed
+                    document.getElementById('binding-domains-progress-status').innerHTML = 
+                        `<div class="alert alert-danger">Error: ${data.error}</div>`;
+                    document.getElementById('binding-domains-progress-bar').classList.remove('progress-bar-animated');
+                    document.getElementById('binding-domains-progress-bar').classList.remove('bg-primary');
+                    document.getElementById('binding-domains-progress-bar').classList.add('bg-danger');
+                } else {
+                    // Still running, continue polling
+                    setTimeout(poll, pollInterval);
+                }
+            })
+            .catch(error => {
+                console.error('Error polling task status:', error);
+                // Show error in progress bar
+                document.getElementById('binding-domains-progress-status').innerHTML = 
+                    `<div class="alert alert-danger">Error: ${error.message}</div>`;
+                document.getElementById('binding-domains-progress-bar').classList.remove('progress-bar-animated');
+                document.getElementById('binding-domains-progress-bar').classList.remove('bg-primary');
+                document.getElementById('binding-domains-progress-bar').classList.add('bg-danger');
+            });
+    }
+    
+    // Start polling
+    poll();
+}
+
+// Update progress bar
+function updateProgressBar(progress, statusText) {
+    const progressBar = document.getElementById('binding-domains-progress-bar');
+    const statusElement = document.getElementById('binding-domains-progress-status');
+    
+    // Update progress percentage
+    progressBar.style.width = `${progress}%`;
+    progressBar.setAttribute('aria-valuenow', progress);
+    progressBar.textContent = `${progress}%`;
+    
+    // Update status text
+    statusElement.textContent = statusText;
+}
+
+// Get status text based on progress percentage
+function getProgressStatusText(progress) {
+    if (progress < 10) {
+        return 'Initializing analysis...';
+    } else if (progress < 40) {
+        return 'Preprocessing sequence data...';
+    } else if (progress < 90) {
+        return 'Analyzing domain-binding intersections...';
+    } else {
+        return 'Finalizing results...';
+    }
+}
+
+// Handle completed analysis
+function handleCompletedAnalysis(result) {
+    // Update stored binding domains data
+    window.enrichmentData.bindingDomainsData = result;
+    
+    // Hide progress bar and show results
+    document.getElementById('binding-domains-progress-card').style.display = 'none';
+    document.getElementById('binding-domains-results-card').style.display = 'block';
+    document.getElementById('binding-domains-table-card').style.display = 'block';
+    
+    // Update visualization
+    createBindingDomainsChart(result.domain_summaries);
+    
+    // Update the binding domains table
+    updateBindingDomainsTable(result.domain_summaries);
+    
+    // Update count badge
+    document.getElementById('binding-domains-badge').textContent = result.domain_summaries.length;
+    document.getElementById('binding-domains-count').textContent = `${result.domain_summaries.length} domains`;
+    
+    // Show analysis summary
+    const summary = `
+        <div class="alert alert-success mt-2">
+            <p><strong>Analysis Complete</strong></p>
+            <ul>
+                <li>Processed ${result.processed_sequences} sequences</li>
+                <li>Found ${result.found_sequences_with_peptides} sequences with valid peptides</li>
+                <li>Identified ${result.domain_summaries.length} domains containing binding peptides</li>
+            </ul>
+        </div>
+    `;
+    document.getElementById('binding-domains-results-card').querySelector('.card-body').insertAdjacentHTML('beforeend', summary);
+}
+}
+
+// Update binding domains table
+function updateBindingDomainsTable(domainData) {
+    const tableBody = document.getElementById('binding-domains-table-body');
+    if (!tableBody) return;
+    
+    // Clear table
+    tableBody.innerHTML = '';
+    
+    // If no data, show message
+    if (!domainData || domainData.length === 0) {
+        const row = document.createElement('tr');
+        row.innerHTML = '<td colspan="7" class="text-center">No binding domains found with current filters.</td>';
+        tableBody.appendChild(row);
+        return;
+    }
+    
+    // Create rows for each domain
+    domainData.forEach(domain => {
+        const row = document.createElement('tr');
+        
+        row.innerHTML = `
+            <td>${domain.domain}</td>
+            <td>${domain.binding_count}</td>
+            <td>${domain.sequence_count}</td>
+            <td>${domain.pct_of_sequences.toFixed(1)}%</td>
+            <td>${domain.avg_affinity.toFixed(1)}</td>
+            <td>${domain.avg_bitscore.toFixed(1)}</td>
+            <td>
+                <button class="btn btn-sm btn-outline-primary view-domain-btn" 
+                        data-domain="${domain.domain}" data-domain-type="binding">
+                    <i class="bi bi-search"></i> View
+                </button>
+                <a href="http://pfam.xfam.org/family/${domain.domain}" target="_blank" class="btn btn-sm btn-outline-info ms-1">
+                    <i class="bi bi-box-arrow-up-right"></i> Pfam
+                </a>
+            </td>
+        `;
+        
+        tableBody.appendChild(row);
+    });
+    
+    // Add event listeners to view buttons
+    tableBody.querySelectorAll('.view-domain-btn').forEach(btn => {
+        btn.addEventListener('click', function() {
+            const domainName = this.dataset.domain;
+            showBindingDomainDetails(domainName);
+        });
+    });
+}
+
+// Export binding domains data to CSV
+function exportBindingDomainsToCSV(domainData, filename) {
+    if (!domainData || domainData.length === 0) {
+        alert('No binding domains data to export');
+        return;
+    }
+    
+    // Define header row
+    const headers = [
+        'Domain',
+        'Binding Count',
+        'Sequence Count',
+        'Percentage of Sequences',
+        'Average Affinity (nM)',
+        'Average BitScore'
+    ];
+    
+    // Create CSV content with header row
+    let csvContent = "data:text/csv;charset=utf-8,";
+    csvContent += headers.join(',') + '\r\n';
+    
+    // Add data rows
+    domainData.forEach(domain => {
+        const row = [
+            `"${domain.domain}"`,
+            domain.binding_count,
+            domain.sequence_count,
+            domain.pct_of_sequences.toFixed(1),
+            domain.avg_affinity.toFixed(1),
+            domain.avg_bitscore.toFixed(1)
+        ];
+        csvContent += row.join(',') + '\r\n';
+    });
+    
+    // Create download link
+    const encodedUri = encodeURI(csvContent);
+    const link = document.createElement('a');
+    link.setAttribute('href', encodedUri);
+    link.setAttribute('download', filename);
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+}
+
+// Apply thresholds to data
+function applyThresholds() {
+    const thresholds = window.enrichmentData.thresholds;
+    
+    // Filter PFAM domains based on bitscore, e-value, and count
+    const filteredPfamDomains = window.enrichmentData.pfamDomains.filter(domain => {
+        // Check count threshold
+        if (domain.count < thresholds.count) return false;
+        
+        // Check bitscore threshold
+        if (domain.avg_bitscore < thresholds.bitscore) return false;
+        
+        // Check e-value threshold
+        if (domain.avg_evalue > thresholds.evalue) return false;
+        
+        return true;
+    });
+    
+    // Filter KOFAM domains
+    const filteredKofamDomains = window.enrichmentData.kofamDomains.filter(domain => {
+        // Check count threshold
+        if (domain.count < thresholds.count) return false;
+        
+        // Check bitscore threshold
+        if (domain.avg_bitscore < thresholds.bitscore) return false;
+        
+        // Check e-value threshold
+        if (domain.avg_evalue > thresholds.evalue) return false;
+        
+        return true;
+    });
+    
+    // Get domain names that passed the filters
+    const validPfamDomains = new Set(filteredPfamDomains.map(d => d.domain));
+    const validKofamDomains = new Set(filteredKofamDomains.map(d => d.domain));
+    
+    // Filter PFAM enrichment data
+    const filteredPfamEnrichment = window.enrichmentData.pfamEnrichment.filter(domain => {
+        // Check if domain passed filtering based on bitscore/e-value/count
+        if (!validPfamDomains.has(domain.domain)) return false;
+        
+        // Check enrichment threshold
+        if (domain.enrichment < thresholds.enrichment) return false;
+        
+        return true;
+    });
+    
+    // Filter KOFAM enrichment data
+    const filteredKofamEnrichment = window.enrichmentData.kofamEnrichment.filter(domain => {
+        // Check if domain passed filtering based on bitscore/e-value/count
+        if (!validKofamDomains.has(domain.domain)) return false;
+        
+        // Check enrichment threshold
+        if (domain.enrichment < thresholds.enrichment) return false;
+        
+        return true;
+    });
+    
+    // Filter PFAM depletion data - only keep domains with enrichment < 1.0
+    const filteredPfamDepletion = window.enrichmentData.pfamDepletion.filter(domain => {
+        // Check if domain passed filtering based on bitscore/e-value/count
+        if (!validPfamDomains.has(domain.domain)) return false;
+        
+        return true;
+    });
+    
+    // Filter KOFAM depletion data
+    const filteredKofamDepletion = window.enrichmentData.kofamDepletion.filter(domain => {
+        // Check if domain passed filtering based on bitscore/e-value/count
+        if (!validKofamDomains.has(domain.domain)) return false;
+        
+        return true;
+    });
+    
+    // Filter PFAM exclusive data
+    const filteredPfamExclusive = window.enrichmentData.pfamExclusive.filter(domain => {
+        // Check if domain passed filtering based on bitscore/e-value/count
+        if (!validPfamDomains.has(domain.domain)) return false;
+        
+        return true;
+    });
+    
+    // Filter KOFAM exclusive data
+    const filteredKofamExclusive = window.enrichmentData.kofamExclusive.filter(domain => {
+        // Check if domain passed filtering based on bitscore/e-value/count
+        if (!validKofamDomains.has(domain.domain)) return false;
+        
+        return true;
+    });
+    
+    // Update visualizations with filtered data
+    createDomainEnrichmentChart('pfam-enrichment-chart', filteredPfamEnrichment, 'pfam-enrichment-count', true);
+    createDomainEnrichmentChart('pfam-depletion-chart', filteredPfamDepletion, 'pfam-depletion-count', false);
+    createDomainEnrichmentChart('kofam-enrichment-chart', filteredKofamEnrichment, 'kofam-enrichment-count', true);
+    createDomainEnrichmentChart('kofam-depletion-chart', filteredKofamDepletion, 'kofam-depletion-count', false);
+    
+    // Update domain tables
+    populateDomainTable('pfam-details-table', filteredPfamDomains, 'pfam');
+    populateDomainTable('kofam-details-table', filteredKofamDomains, 'kofam');
+    
+    // Update exclusive domains counts
+    document.getElementById('pfam-exclusive-count').textContent = `${filteredPfamExclusive.length} domains`;
+    document.getElementById('kofam-exclusive-count').textContent = `${filteredKofamExclusive.length} domains`;
+    document.getElementById('exclusive-domains-badge').textContent = filteredPfamExclusive.length + filteredKofamExclusive.length;
+    
+    // Update all domains table
+    const allEnrichmentData = [
+        ...filteredPfamEnrichment.map(d => ({ ...d, domain_type: 'PFAM', status: 'Enriched' })),
+        ...filteredPfamDepletion.map(d => ({ ...d, domain_type: 'PFAM', status: 'Depleted' })),
+        ...filteredPfamExclusive.map(d => ({ ...d, domain_type: 'PFAM', status: 'Exclusive' })),
+        ...filteredKofamEnrichment.map(d => ({ ...d, domain_type: 'KOFAM', status: 'Enriched' })),
+        ...filteredKofamDepletion.map(d => ({ ...d, domain_type: 'KOFAM', status: 'Depleted' })),
+        ...filteredKofamExclusive.map(d => ({ ...d, domain_type: 'KOFAM', status: 'Exclusive' }))
+    ];
+    
+    initAllDomainsTable(allEnrichmentData);
+    
+    // Hide domain associations card if showing
+    document.getElementById('domain-associations-card').style.display = 'none';
+}

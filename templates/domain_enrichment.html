@@ -1,0 +1,882 @@
+<!-- File: templates/domain_enrichment.html -->
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Domain Enrichment Analysis</title>
+    
+    <!-- Load Bootstrap CSS -->
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0-alpha1/dist/css/bootstrap.min.css" rel="stylesheet">
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.8.0/font/bootstrap-icons.css">
+    
+    <!-- Load custom CSS -->
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/styles.css') }}">
+    
+    <!-- Favicon -->
+    <link rel="icon" type="image/svg+xml" href="{{ url_for('static', filename='img/favicon.svg') }}">
+    
+    <style>
+        /* Additional styles for domain enrichment page */
+        .domain-display {
+            font-family: 'Courier New', monospace;
+            font-size: 0.9rem;
+            max-height: 300px;
+            overflow-y: auto;
+            line-height: 1.5;
+            background-color: #f8f9fa;
+            border: 1px solid #dee2e6;
+            border-radius: 4px;
+        }
+        
+        .domain-card {
+            transition: all 0.2s;
+        }
+        
+        .domain-card:hover {
+            box-shadow: 0 0.125rem 0.25rem rgba(0, 0, 0, 0.075);
+            border-color: #0d6efd;
+        }
+        
+        .threshold-control {
+            padding: 1rem;
+            background-color: #f8f9fa;
+            border-radius: 0.5rem;
+            margin-bottom: 1rem;
+        }
+        
+        .domain-badge {
+            margin-right: 5px;
+            margin-bottom: 5px;
+            display: inline-block;
+            font-size: 0.85rem;
+        }
+        
+        .domain-tooltip {
+            position: absolute;
+            background-color: rgba(255, 255, 255, 0.95);
+            border: 1px solid #ddd;
+            border-radius: 4px;
+            padding: 8px;
+            font-size: 0.8rem;
+            pointer-events: none;
+            z-index: 100;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+            max-width: 300px;
+        }
+        
+        .domain-bar.enriched {
+            fill: #5470c6;
+        }
+        
+        .domain-bar.depleted {
+            fill: #e15759;
+        }
+        
+        .domain-bar.kofam {
+            fill: #91cc75;
+        }
+        
+        .analysis-card {
+            height: 100%;
+        }
+        
+        .mimic-gene-link {
+            display: inline-block;
+            margin-right: 8px;
+            margin-bottom: 8px;
+        }
+        
+        .stats-value {
+            font-weight: bold;
+            font-size: 1.2rem;
+        }
+        
+        .stats-label {
+            font-size: 0.8rem;
+            color: #6c757d;
+        }
+        
+        .stats-card {
+            transition: all 0.2s;
+        }
+        
+        .stats-card:hover {
+            transform: translateY(-5px);
+            box-shadow: 0 0.5rem 1rem rgba(0, 0, 0, 0.15);
+        }
+        
+        .reference-line {
+            stroke: #666;
+            stroke-width: 1px;
+            stroke-dasharray: 5,5;
+        }
+        
+        .label {
+            font-size: 12px;
+            fill: #333;
+        }
+        
+        .section-title {
+            border-bottom: 2px solid #f0f0f0;
+            padding-bottom: 8px;
+            margin-bottom: 16px;
+        }
+    </style>
+</head>
+<body>
+    <nav class="navbar navbar-expand-lg navbar-dark bg-dark">
+        <div class="container-fluid">
+            <a class="navbar-brand" href="/">Mimic Identification Pipeline</a>
+            <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#navbarNav" aria-controls="navbarNav" aria-expanded="false" aria-label="Toggle navigation">
+                <span class="navbar-toggler-icon"></span>
+            </button>
+            <div class="collapse navbar-collapse" id="navbarNav">
+                <ul class="navbar-nav">
+                    <li class="nav-item">
+                        <a class="nav-link" href="/">Home</a>
+                    </li>
+                    <li class="nav-item">
+                        <a class="nav-link active" href="/domain_enrichment">Domain Enrichment</a>
+                    </li>
+                </ul>
+            </div>
+            <span class="navbar-text">
+                Sample: <span id="sample-id">{{ sample_id }}</span>
+            </span>
+        </div>
+    </nav>
+
+    <div class="container mt-4 mb-5">
+        <div class="row">
+            <div class="col-12">
+                <!-- Header Section -->
+                <div class="card mb-4">
+                    <div class="card-header bg-light">
+                        <div class="d-flex justify-content-between align-items-center">
+                            <h4 class="mb-0">
+                                <i class="bi bi-diagram-3"></i> 
+                                Domain Enrichment Analysis
+                            </h4>
+                            <a href="/" class="btn btn-outline-primary">
+                                <i class="bi bi-arrow-left"></i> Back to Main View
+                            </a>
+                        </div>
+                    </div>
+                    <div class="card-body">
+                        <div class="alert alert-info">
+                            <p><strong>What is domain enrichment?</strong></p>
+                            <p>This analysis compares the frequency of protein domains in mimic-bearing sequences with their frequency in the global metagenome.</p>
+                            <ul>
+                                <li><strong>Enrichment > 1</strong>: Domain is overrepresented in mimic-bearing proteins compared to the background metagenome</li>
+                                <li><strong>Enrichment < 1</strong>: Domain is underrepresented in mimic-bearing proteins</li>
+                            </ul>
+                            <p>High enrichment values may indicate domains that are particularly important for MHC binding or interaction with the host immune system.</p>
+                        </div>
+                        
+                        <!-- Statistics Cards -->
+                        <div class="row mt-4">
+                            <div class="col-md-3">
+                                <div class="card stats-card h-100 text-center">
+                                    <div class="card-body">
+                                        <i class="bi bi-diagram-2 fs-1 text-primary mb-2"></i>
+                                        <div class="stats-value">{{ statistics.better_binder_count }}</div>
+                                        <div class="stats-label">Mimic-Bearing Sequences</div>
+                                    </div>
+                                </div>
+                            </div>
+                            <div class="col-md-3">
+                                <div class="card stats-card h-100 text-center">
+                                    <div class="card-body">
+                                        <i class="bi bi-arrow-up-circle fs-1 text-info mb-2"></i>
+                                        <div class="stats-value">{{ statistics.pfam_domains.enriched }}</div>
+                                        <div class="stats-label">Enriched PFAM Domains</div>
+                                    </div>
+                                </div>
+                            </div>
+                            <div class="col-md-3">
+                                <div class="card stats-card h-100 text-center">
+                                    <div class="card-body">
+                                        <i class="bi bi-arrow-down-circle fs-1 text-danger mb-2"></i>
+                                        <div class="stats-value">{{ statistics.pfam_domains.depleted }}</div>
+                                        <div class="stats-label">Depleted PFAM Domains</div>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                
+                <!-- Threshold Controls -->
+                <div class="card mb-4">
+                    <div class="card-header">
+                        <h5 class="mb-0">
+                            <i class="bi bi-sliders"></i> Analysis Thresholds
+                        </h5>
+                    </div>
+                    <div class="card-body threshold-control">
+                        <div class="row">
+                            <div class="col-md-3 mb-3">
+                                <label for="bitscore-threshold" class="form-label">HMM BitScore Threshold</label>
+                                <div class="input-group">
+                                    <input type="number" min="0" step="1" class="form-control" id="bitscore-threshold" value="{{ thresholds.bitscore }}">
+                                    <span class="input-group-text">min</span>
+                                </div>
+                                <div class="form-text">Minimum bitscore to include a domain</div>
+                            </div>
+                            <div class="col-md-3 mb-3">
+                                <label for="evalue-threshold" class="form-label">HMM E-value Threshold</label>
+                                <div class="input-group">
+                                    <input type="number" min="0" step="0.00001" max="1" class="form-control" id="evalue-threshold" value="{{ thresholds.evalue }}">
+                                    <span class="input-group-text">max</span>
+                                </div>
+                                <div class="form-text">Maximum e-value to include a domain</div>
+                            </div>
+                            <div class="col-md-3 mb-3">
+                                <label for="count-threshold" class="form-label">HMM Domain Count Threshold</label>
+                                <div class="input-group">
+                                    <input type="number" min="1" step="1" class="form-control" id="count-threshold" value="{{ thresholds.count }}">
+                                    <span class="input-group-text">min</span>
+                                </div>
+                                <div class="form-text">Minimum occurrences required</div>
+                            </div>
+                            <div class="col-md-3 mb-3">
+                                <label for="enrichment-threshold" class="form-label">Enrichment Threshold</label>
+                                <div class="input-group">
+                                    <input type="number" min="0" step="0.1" class="form-control" id="enrichment-threshold" value="{{ thresholds.enrichment }}">
+                                    <span class="input-group-text">min</span>
+                                </div>
+                                <div class="form-text">Minimum enrichment value (fold change)</div>
+                            </div>
+                        </div>
+                        <div class="d-flex justify-content-end mt-3">
+                            <button id="apply-thresholds" class="btn btn-primary">
+                                <i class="bi bi-filter"></i> Apply Thresholds
+                            </button>
+                        </div>
+                    </div>
+                </div>
+                
+                <!-- Analysis Tabs -->
+                <div class="card mb-4">
+                    <div class="card-header">
+                        <ul class="nav nav-tabs card-header-tabs" id="analysis-tabs" role="tablist">
+                            <li class="nav-item" role="presentation">
+                                <button class="nav-link active" id="pfam-tab" data-bs-toggle="tab" 
+                                    data-bs-target="#pfam-tab-content" type="button" role="tab" 
+                                    aria-controls="pfam-tab-content" aria-selected="true">
+                                    PFAM Analysis
+                                </button>
+                            </li>
+                            <li class="nav-item" role="presentation">
+                                <button class="nav-link" id="kofam-tab" data-bs-toggle="tab" 
+                                    data-bs-target="#kofam-tab-content" type="button" role="tab" 
+                                    aria-controls="kofam-tab-content" aria-selected="false">
+                                    KOFAM Analysis
+                                </button>
+                            </li>
+                            <li class="nav-item" role="presentation">
+                                <button class="nav-link" id="binding-domains-tab" data-bs-toggle="tab" 
+                                    data-bs-target="#binding-domains-tab-content" type="button" role="tab" 
+                                    aria-controls="binding-domains-tab-content" aria-selected="false">
+                                    Binding Domains
+                                    <span class="badge bg-info" id="binding-domains-badge">{{ binding_domains_data.domain_summaries|length }}</span>
+                                </button>
+                            </li>
+                            <li class="nav-item" role="presentation">
+                                <button class="nav-link" id="exclusive-tab" data-bs-toggle="tab" 
+                                    data-bs-target="#exclusive-tab-content" type="button" role="tab" 
+                                    aria-controls="exclusive-tab-content" aria-selected="false">
+                                    Exclusive Domains
+                                    <span class="badge bg-primary" id="exclusive-domains-badge">{{ pfam_exclusive|length + kofam_exclusive|length }}</span>
+                                </button>
+                            </li>
+                            <li class="nav-item" role="presentation">
+                                <button class="nav-link" id="all-data-tab" data-bs-toggle="tab" 
+                                    data-bs-target="#all-data-tab-content" type="button" role="tab" 
+                                    aria-controls="all-data-tab-content" aria-selected="false">
+                                    All Domains Table
+                                </button>
+                            </li>
+                            <li class="nav-item" role="presentation">
+                                <button class="nav-link" id="statistics-tab" data-bs-toggle="tab" 
+                                    data-bs-target="#statistics-tab-content" type="button" role="tab" 
+                                    aria-controls="statistics-tab-content" aria-selected="false">
+                                    Detailed Statistics
+                                </button>
+                            </li>
+                        </ul>
+                    </div>
+                    <div class="card-body">
+                        <div class="tab-content" id="analysis-tabs-content">
+                            <!-- PFAM Analysis Tab -->
+                            <div class="tab-pane fade show active" id="pfam-tab-content" role="tabpanel" aria-labelledby="pfam-tab">
+                                <!-- PFAM Enrichment Analysis -->
+                                <div class="card mb-4">
+                                    <div class="card-header d-flex justify-content-between align-items-center">
+                                        <h6 class="mb-0">PFAM Domain Enrichment Analysis</h6>
+                                        <div>
+                                            <span class="badge bg-info" id="pfam-enrichment-count">{{ pfam_enrichment|length }} domains</span>
+                                        </div>
+                                    </div>
+                                    <div class="card-body">
+                                        <div id="pfam-enrichment-chart" style="min-height: 500px; height: auto;"></div>
+                                    </div>
+                                </div>
+                                
+                                <!-- PFAM Depletion Analysis -->
+                                <div class="card mb-4">
+                                    <div class="card-header d-flex justify-content-between align-items-center">
+                                        <h6 class="mb-0">PFAM Domain Depletion Analysis</h6>
+                                        <div>
+                                            <span class="badge bg-info" id="pfam-depletion-count">{{ pfam_depletion|length }} domains</span>
+                                        </div>
+                                    </div>
+                                    <div class="card-body">
+                                        <div id="pfam-depletion-chart" style="min-height: 500px; height: auto;"></div>
+                                    </div>
+                                </div>
+                                
+                                <!-- PFAM Domain Catalog -->
+                                <div class="card mb-4">
+                                    <div class="card-header d-flex justify-content-between align-items-center">
+                                        <h6 class="mb-0">PFAM Domain Catalog</h6>
+                                        <div>
+                                            <span class="badge bg-info" id="pfam-domains-count">{{ pfam_domains|length }} domains</span>
+                                        </div>
+                                    </div>
+                                    <div class="card-body">
+                                        <div class="table-responsive" style="max-height: 500px; overflow-y: auto;">
+                                            <table class="table table-striped table-hover" id="pfam-details-table">
+                                                <thead style="position: sticky; top: 0; z-index: 1; background-color: white;">
+                                                    <tr>
+                                                        <th>Domain</th>
+                                                        <th>Count</th>
+                                                        <th>Avg. BitScore</th>
+                                                        <th>Avg. E-value</th>
+                                                        <th>Actions</th>
+                                                    </tr>
+                                                </thead>
+                                                <tbody>
+                                                    <!-- Will be populated by JavaScript -->
+                                                </tbody>
+                                            </table>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                            
+                            <!-- KOFAM Analysis Tab -->
+                            <div class="tab-pane fade" id="kofam-tab-content" role="tabpanel" aria-labelledby="kofam-tab">
+                                <!-- KOFAM Enrichment Analysis -->
+                                <div class="card mb-4">
+                                    <div class="card-header d-flex justify-content-between align-items-center">
+                                        <h6 class="mb-0">KOFAM Domain Enrichment Analysis</h6>
+                                        <div>
+                                            <span class="badge bg-info" id="kofam-enrichment-count">{{ kofam_enrichment|length }} domains</span>
+                                        </div>
+                                    </div>
+                                    <div class="card-body">
+                                        <div id="kofam-enrichment-chart" style="min-height: 500px; height: auto;"></div>
+                                    </div>
+                                </div>
+                                
+                                <!-- KOFAM Depletion Analysis -->
+                                <div class="card mb-4">
+                                    <div class="card-header d-flex justify-content-between align-items-center">
+                                        <h6 class="mb-0">KOFAM Domain Depletion Analysis</h6>
+                                        <div>
+                                            <span class="badge bg-info" id="kofam-depletion-count">{{ kofam_depletion|length }} domains</span>
+                                        </div>
+                                    </div>
+                                    <div class="card-body">
+                                        <div id="kofam-depletion-chart" style="min-height: 500px; height: auto;"></div>
+                                    </div>
+                                </div>
+                                
+                                <!-- KOFAM Domain Catalog -->
+                                <div class="card mb-4">
+                                    <div class="card-header d-flex justify-content-between align-items-center">
+                                        <h6 class="mb-0">KOFAM Domain Catalog</h6>
+                                        <div>
+                                            <span class="badge bg-info" id="kofam-domains-count">{{ kofam_domains|length }} domains</span>
+                                        </div>
+                                    </div>
+                                    <div class="card-body">
+                                        <div class="table-responsive" style="max-height: 500px; overflow-y: auto;">
+                                            <table class="table table-striped table-hover" id="kofam-details-table">
+                                                <thead style="position: sticky; top: 0; z-index: 1; background-color: white;">
+                                                    <tr>
+                                                        <th>Domain</th>
+                                                        <th>Count</th>
+                                                        <th>Avg. BitScore</th>
+                                                        <th>Avg. E-value</th>
+                                                        <th>Actions</th>
+                                                    </tr>
+                                                </thead>
+                                                <tbody>
+                                                    <!-- Will be populated by JavaScript -->
+                                                </tbody>
+                                            </table>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                            
+                            <!-- Exclusive Domains Tab -->
+                            <div class="tab-pane fade" id="exclusive-tab-content" role="tabpanel" aria-labelledby="exclusive-tab">
+                                <div class="alert alert-info mb-4">
+                                    <p><i class="bi bi-info-circle"></i> <strong>Exclusive domains</strong> are those found only in mimic-bearing proteins and absent from the rest of the metagenome.</p>
+                                    <p>These domains may be particularly important for understanding the unique properties of proteins that produce MHC-binding peptides.</p>
+                                </div>
+                                
+                                <!-- PFAM Exclusive Domains -->
+                                <div class="card mb-4">
+                                    <div class="card-header d-flex justify-content-between align-items-center">
+                                        <h6 class="mb-0">PFAM Exclusive Domains</h6>
+                                        <div>
+                                            <span class="badge bg-info" id="pfam-exclusive-count">{{ pfam_exclusive|length }} domains</span>
+                                        </div>
+                                    </div>
+                                    <div class="card-body">
+                                        <div class="table-responsive">
+                                            <table class="table table-striped table-hover" id="pfam-exclusive-table">
+                                                <thead>
+                                                    <tr>
+                                                        <th>Domain</th>
+                                                        <th>Occurrence Count</th>
+                                                        <th>Mimic Genes</th>
+                                                        <th>Target Fraction</th>
+                                                        <th>Actions</th>
+                                                    </tr>
+                                                </thead>
+                                                <tbody>
+                                                    {% if pfam_exclusive|length > 0 %}
+                                                        {% for domain in pfam_exclusive %}
+                                                        <tr>
+                                                            <td>{{ domain.domain }}</td>
+                                                            <td>{{ domain.target_count }}</td>
+                                                            <td>{{ domain.gene_count }}</td>
+                                                            <td>{{ (domain.target_fraction * 100)|round(2) }}%</td>
+                                                            <td>
+                                                                <button class="btn btn-sm btn-outline-primary view-domain-btn" 
+                                                                        data-domain="{{ domain.domain }}">
+                                                                    <i class="bi bi-search"></i> View
+                                                                </button>
+                                                                <a href="http://pfam.xfam.org/family/{{ domain.domain }}" target="_blank" class="btn btn-sm btn-outline-info ms-1">
+                                                                    <i class="bi bi-box-arrow-up-right"></i> Pfam
+                                                                </a>
+                                                            </td>
+                                                        </tr>
+                                                        {% endfor %}
+                                                    {% else %}
+                                                        <tr>
+                                                            <td colspan="5" class="text-center">No exclusive PFAM domains found.</td>
+                                                        </tr>
+                                                    {% endif %}
+                                                </tbody>
+                                            </table>
+                                        </div>
+                                    </div>
+                                </div>
+                                
+                                <!-- KOFAM Exclusive Domains -->
+                                <div class="card mb-4">
+                                    <div class="card-header d-flex justify-content-between align-items-center">
+                                        <h6 class="mb-0">KOFAM Exclusive Domains</h6>
+                                        <div>
+                                            <span class="badge bg-info" id="kofam-exclusive-count">{{ kofam_exclusive|length }} domains</span>
+                                        </div>
+                                    </div>
+                                    <div class="card-body">
+                                        <div class="table-responsive">
+                                            <table class="table table-striped table-hover" id="kofam-exclusive-table">
+                                                <thead>
+                                                    <tr>
+                                                        <th>Domain</th>
+                                                        <th>Occurrence Count</th>
+                                                        <th>Mimic Genes</th>
+                                                        <th>Target Fraction</th>
+                                                        <th>Actions</th>
+                                                    </tr>
+                                                </thead>
+                                                <tbody>
+                                                    {% if kofam_exclusive|length > 0 %}
+                                                        {% for domain in kofam_exclusive %}
+                                                        <tr>
+                                                            <td>{{ domain.domain }}</td>
+                                                            <td>{{ domain.target_count }}</td>
+                                                            <td>{{ domain.gene_count }}</td>
+                                                            <td>{{ (domain.target_fraction * 100)|round(2) }}%</td>
+                                                            <td>
+                                                                <button class="btn btn-sm btn-outline-primary view-domain-btn" 
+                                                                        data-domain="{{ domain.domain }}">
+                                                                    <i class="bi bi-search"></i> View
+                                                                </button>
+                                                                <a href="https://www.genome.jp/dbget-bin/www_bget?ko:{{ domain.domain }}" target="_blank" class="btn btn-sm btn-outline-info ms-1">
+                                                                    <i class="bi bi-box-arrow-up-right"></i> KEGG
+                                                                </a>
+                                                            </td>
+                                                        </tr>
+                                                        {% endfor %}
+                                                    {% else %}
+                                                        <tr>
+                                                            <td colspan="5" class="text-center">No exclusive KOFAM domains found.</td>
+                                                        </tr>
+                                                    {% endif %}
+                                                </tbody>
+                                            </table>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                            
+                            <!-- All Domains Table Tab -->
+                            <div class="tab-pane fade" id="all-data-tab-content" role="tabpanel" aria-labelledby="all-data-tab">
+                                <div class="card mb-4">
+                                    <div class="card-header d-flex justify-content-between align-items-center">
+                                        <h6 class="mb-0">All Domain Enrichment Data</h6>
+                                        <div>
+                                            <button class="btn btn-sm btn-outline-primary" id="export-table-btn">
+                                                <i class="bi bi-download"></i> Export CSV
+                                            </button>
+                                            <div class="btn-group ms-2">
+                                                <button class="btn btn-sm btn-outline-secondary dropdown-toggle" type="button" id="filterDropdown" data-bs-toggle="dropdown" aria-expanded="false">
+                                                    <i class="bi bi-funnel"></i> Filter
+                                                </button>
+                                                <ul class="dropdown-menu" aria-labelledby="filterDropdown">
+                                                    <li><a class="dropdown-item" href="#" data-filter="all">All Domains</a></li>
+                                                    <li><hr class="dropdown-divider"></li>
+                                                    <li><a class="dropdown-item" href="#" data-filter="Exclusive">Exclusive Domains</a></li>
+                                                    <li><a class="dropdown-item" href="#" data-filter="Enriched">Enriched Domains</a></li>
+                                                    <li><a class="dropdown-item" href="#" data-filter="Depleted">Depleted Domains</a></li>
+                                                    <li><hr class="dropdown-divider"></li>
+                                                    <li><a class="dropdown-item" href="#" data-filter="PFAM">PFAM Domains</a></li>
+                                                    <li><a class="dropdown-item" href="#" data-filter="KOFAM">KOFAM Domains</a></li>
+                                                </ul>
+                                            </div>
+                                        </div>
+                                    </div>
+                                    <div class="card-body">
+                                        <div class="table-responsive">
+                                            <table class="table table-striped table-hover" id="all-domains-table">
+                                                <thead>
+                                                    <tr>
+                                                        <th>Domain</th>
+                                                        <th>Type</th>
+                                                        <th>Status</th>
+                                                        <th>Enrichment</th>
+                                                        <th>Target Count</th>
+                                                        <th>Background Count</th>
+                                                        <th>Target %</th>
+                                                        <th>Background %</th>
+                                                        <th>Actions</th>
+                                                    </tr>
+                                                </thead>
+                                                <tbody id="all-domains-table-body">
+                                                    <!-- Will be populated by JavaScript -->
+                                                </tbody>
+                                            </table>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+
+                            <!-- Binding Domains Tab -->
+                            <div class="tab-pane fade" id="binding-domains-tab-content" role="tabpanel" aria-labelledby="binding-domains-tab">
+                                <div class="alert alert-info mb-4">
+                                    <p><i class="bi bi-info-circle"></i> <strong>Binding Domains</strong> are PFAM domains that contain mimic sequences (MHC binding peptides).</p>
+                                    <p>This analysis identifies which domains are most frequently associated with binding peptides, which could indicate structural or functional relevance to binding.</p>
+                                </div>
+                                
+                                <!-- Binding Domains Filtering Controls -->
+                                <div class="card mb-4">
+                                    <div class="card-header">
+                                        <h6 class="mb-0">Binding Filter Settings</h6>
+                                    </div>
+                                    <div class="card-body">
+                                        <div class="row">
+                                            <div class="col-md-6 mb-3">
+                                                <label for="binding-affinity-threshold" class="form-label">Binding Affinity Threshold (nM)</label>
+                                                <div class="input-group">
+                                                    <input type="number" min="0" step="10" class="form-control" id="binding-affinity-threshold" value="{{ thresholds.affinity }}">
+                                                    <span class="input-group-text">max</span>
+                                                </div>
+                                                <div class="form-text">Maximum affinity value to include (lower is better binding)</div>
+                                            </div>
+                                            <div class="col-md-6 mb-3">
+                                                <label for="binding-level-filter" class="form-label">Binding Level</label>
+                                                <select class="form-select" id="binding-level-filter">
+                                                    <option value="">All Levels</option>
+                                                    <option value="<= SB">Strong Binders (SB)</option>
+                                                    <option value="<= WB">Weak Binders (WB)</option>
+                                                </select>
+                                                <div class="form-text">Filter by binding level classification</div>
+                                            </div>
+                                        </div>
+                                        <div class="d-flex justify-content-end mt-3">
+                                            <button id="apply-binding-filters" class="btn btn-primary">
+                                                <i class="bi bi-filter"></i> Apply Filters
+                                            </button>
+                                        </div>
+                                    </div>
+                                </div>
+                                
+                                <!-- Run Analysis Button -->
+                                <div class="card mb-4" id="binding-domains-run-card">
+                                    <div class="card-body text-center">
+                                        <h5 class="mb-3">Binding Analysis Ready</h5>
+                                        <p>Analyze which PFAM domains contain binding peptides. This may take some time depending on dataset size.</p>
+                                        <button id="run-binding-analysis" class="btn btn-primary">
+                                            <i class="bi bi-play-circle"></i> Run Binding Domain Analysis
+                                        </button>
+                                    </div>
+                                </div>
+
+                                <!-- Progress Bar (hidden initially) -->
+                                <div class="card mb-4" id="binding-domains-progress-card" style="display: none;">
+                                    <div class="card-body">
+                                        <h5 class="mb-3">Analyzing Binding Domains...</h5>
+                                        <div class="progress mb-3">
+                                            <div id="binding-domains-progress-bar" class="progress-bar progress-bar-striped progress-bar-animated" role="progressbar" style="width: 0%;" aria-valuenow="0" aria-valuemin="0" aria-valuemax="100">0%</div>
+                                        </div>
+                                        <div id="binding-domains-progress-status">Initializing analysis...</div>
+                                    </div>
+                                </div>
+
+                                <!-- Binding Domains Summary (hidden initially) -->
+                                <div class="card mb-4" id="binding-domains-results-card" style="display: none;">
+                                    <div class="card-header d-flex justify-content-between align-items-center">
+                                        <h6 class="mb-0">PFAM Domains with Binding Sequences</h6>
+                                        <div class="d-flex">
+                                            <span class="badge bg-info me-2" id="binding-domains-count">0 domains</span>
+                                            <button id="export-binding-domains-csv" class="btn btn-sm btn-outline-primary">
+                                                <i class="bi bi-download"></i> Export CSV
+                                            </button>
+                                        </div>
+                                    </div>
+                                    <div class="card-body">
+                                        <div id="binding-domains-chart" style="min-height: 400px; height: auto;"></div>
+                                    </div>
+                                </div>
+                                
+                                <!-- Binding Domains Table (hidden initially) -->
+                                <div class="card mb-4" id="binding-domains-table-card" style="display: none;">
+                                    <div class="card-header">
+                                        <h6 class="mb-0">Binding Domains Details</h6>
+                                    </div>
+                                    <div class="card-body">
+                                        <div class="table-responsive">
+                                            <table class="table table-striped table-hover" id="binding-domains-table">
+                                                <thead>
+                                                    <tr>
+                                                        <th>Domain</th>
+                                                        <th>Binding Count</th>
+                                                        <th>Sequence Count</th>
+                                                        <th>% of Sequences</th>
+                                                        <th>Avg. Affinity (nM)</th>
+                                                        <th>Avg. BitScore</th>
+                                                        <th>Actions</th>
+                                                    </tr>
+                                                </thead>
+                                                <tbody id="binding-domains-table-body">
+                                                    <tr>
+                                                        <td colspan="7" class="text-center">No binding domains found with current filters.</td>
+                                                    </tr>
+                                                </tbody>
+                                            </table>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+
+                            <!-- Detailed Statistics Tab -->
+                            <div class="tab-pane fade" id="statistics-tab-content" role="tabpanel" aria-labelledby="statistics-tab">
+                                <div class="row">
+                                    <div class="col-md-6">
+                                        <div class="card mb-4">
+                                            <div class="card-header">
+                                                <h6 class="mb-0">PFAM Domain Statistics</h6>
+                                            </div>
+                                            <div class="card-body">
+                                                <table class="table table-bordered">
+                                                    <thead class="table-light">
+                                                        <tr>
+                                                            <th>Metric</th>
+                                                            <th>Better Binder</th>
+                                                            <th>Metagenome</th>
+                                                        </tr>
+                                                    </thead>
+                                                    <tbody>
+                                                        <tr>
+                                                            <th>Unique Domains</th>
+                                                            <td>{{ statistics.pfam_domains.better_binder.unique_domains }}</td>
+                                                            <td>{{ statistics.pfam_domains.metagenome.unique_domains }}</td>
+                                                        </tr>
+                                                        <tr>
+                                                            <th>Total Occurrences</th>
+                                                            <td>{{ statistics.pfam_domains.better_binder.total_occurrences }}</td>
+                                                            <td>{{ statistics.pfam_domains.metagenome.total_occurrences }}</td>
+                                                        </tr>
+                                                        <tr>
+                                                            <th>Sequences with Domains</th>
+                                                            <td>{{ statistics.better_binder_count }}</td>
+                                                            <td>{{ statistics.metagenome_count }}</td>
+                                                        </tr>
+                                                        <tr>
+                                                            <th>Enriched Domains</th>
+                                                            <td>{{ statistics.pfam_domains.enriched }}</td>
+                                                            <td>-</td>
+                                                        </tr>
+                                                        <tr>
+                                                            <th>Depleted Domains</th>
+                                                            <td>{{ statistics.pfam_domains.depleted }}</td>
+                                                            <td>-</td>
+                                                        </tr>
+                                                        <tr>
+                                                            <th>Exclusive Domains</th>
+                                                            <td>{{ statistics.pfam_domains.exclusive }}</td>
+                                                            <td>-</td>
+                                                        </tr>
+                                                    </tbody>
+                                                </table>
+                                            </div>
+                                        </div>
+                                    </div>
+                                    <div class="col-md-6">
+                                        <div class="card mb-4">
+                                            <div class="card-header">
+                                                <h6 class="mb-0">KOFAM Domain Statistics</h6>
+                                            </div>
+                                            <div class="card-body">
+                                                <table class="table table-bordered">
+                                                    <thead class="table-light">
+                                                        <tr>
+                                                            <th>Metric</th>
+                                                            <th>Better Binder</th>
+                                                            <th>Metagenome</th>
+                                                        </tr>
+                                                    </thead>
+                                                    <tbody>
+                                                        <tr>
+                                                            <th>Unique Domains</th>
+                                                            <td>{{ statistics.kofam_domains.better_binder.unique_domains }}</td>
+                                                            <td>{{ statistics.kofam_domains.metagenome.unique_domains }}</td>
+                                                        </tr>
+                                                        <tr>
+                                                            <th>Total Occurrences</th>
+                                                            <td>{{ statistics.kofam_domains.better_binder.total_occurrences }}</td>
+                                                            <td>{{ statistics.kofam_domains.metagenome.total_occurrences }}</td>
+                                                        </tr>
+                                                        <tr>
+                                                            <th>Sequences with Domains</th>
+                                                            <td>{{ statistics.better_binder_count }}</td>
+                                                            <td>{{ statistics.metagenome_count }}</td>
+                                                        </tr>
+                                                        <tr>
+                                                            <th>Enriched Domains</th>
+                                                            <td>{{ statistics.kofam_domains.enriched }}</td>
+                                                            <td>-</td>
+                                                        </tr>
+                                                        <tr>
+                                                            <th>Depleted Domains</th>
+                                                            <td>{{ statistics.kofam_domains.depleted }}</td>
+                                                            <td>-</td>
+                                                        </tr>
+                                                        <tr>
+                                                            <th>Exclusive Domains</th>
+                                                            <td>{{ statistics.kofam_domains.exclusive }}</td>
+                                                            <td>-</td>
+                                                        </tr>
+                                                    </tbody>
+                                                </table>
+                                            </div>
+                                        </div>
+                                    </div>
+                                </div>
+                                
+                                <div class="card mb-4">
+                                    <div class="card-header">
+                                        <h6 class="mb-0">Enrichment Analysis Explanation</h6>
+                                    </div>
+                                    <div class="card-body">
+                                        <p>Domain enrichment analysis compares the frequency of protein domains in mimic-bearing sequences with their frequency in the global metagenome. This comparison helps identify which domains are overrepresented or underrepresented in sequences that contain MHC-I binding peptides.</p>
+                                        
+                                        <h5 class="mt-4">Calculation Method</h5>
+                                        <p>For each domain, we calculate:</p>
+                                        <pre class="bg-light p-3 rounded">
+Enrichment = (Domain count in mimic proteins / Total domains in mimic proteins) / (Domain count in metagenome / Total domains in metagenome)
+                                        </pre>
+                                        
+                                        <h5 class="mt-4">Interpretation</h5>
+                                        <ul>
+                                            <li><strong>Enrichment > 1</strong>: The domain is overrepresented in mimic-bearing proteins</li>
+                                            <li><strong>Enrichment = 1</strong>: The domain occurs at the same frequency in both datasets</li>
+                                            <li><strong>Enrichment < 1</strong>: The domain is underrepresented in mimic-bearing proteins</li>
+                                            <li><strong>Enrichment = ∞</strong>: The domain appears only in mimic-bearing proteins, not in the background metagenome</li>
+                                        </ul>
+                                        
+                                        <h5 class="mt-4">Significance</h5>
+                                        <p>Domains with high enrichment values may play important roles in:</p>
+                                        <ul>
+                                            <li>Generating peptides that mimic host epitopes</li>
+                                            <li>Interacting with the host immune system</li>
+                                            <li>Facilitating protein degradation patterns that expose MHC-binding peptides</li>
+                                        </ul>
+                                        
+                                        <p>Conversely, domains with low enrichment values (depletion) may be associated with proteins that are less likely to generate MHC-binding peptides, possibly due to:</p>
+                                        <ul>
+                                            <li>Structural properties that protect against proteasomal degradation</li>
+                                            <li>Lack of sequences that can bind to MHC molecules</li>
+                                            <li>Functional roles that don't involve host-microbe interactions</li>
+                                        </ul>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                
+                <!-- Domain-Gene Associations (shown when a domain is selected) -->
+                <div class="card mb-4" id="domain-associations-card" style="display: none;">
+                    <div class="card-header">
+                        <h5 class="mb-0" id="domain-associations-title">
+                            <i class="bi bi-diagram-3"></i> Domain-Gene Associations
+                        </h5>
+                    </div>
+                    <div class="card-body">
+                        <div id="domain-associations-content"></div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Load JS Libraries -->
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0-alpha1/dist/js/bootstrap.bundle.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/d3@7.8.2/dist/d3.min.js"></script>
+    
+    <!-- Load custom JavaScript -->
+    <script src="{{ url_for('static', filename='js/domain_enrichment.js') }}"></script>
+    
+    <script>
+        document.addEventListener('DOMContentLoaded', function() {
+            // Initialize the domain enrichment page
+            initDomainEnrichment({
+                pfamEnrichment: {{ pfam_enrichment|tojson }},
+                kofamEnrichment: {{ kofam_enrichment|tojson }},
+                pfamDepletion: {{ pfam_depletion|tojson }},
+                kofamDepletion: {{ kofam_depletion|tojson }},
+                pfamExclusive: {{ pfam_exclusive|tojson }},
+                kofamExclusive: {{ kofam_exclusive|tojson }},
+                pfamDomains: {{ pfam_domains|tojson }},
+                kofamDomains: {{ kofam_domains|tojson }},
+                allEnrichmentData: {{ all_enrichment_data|tojson }},
+                statistics: {{ statistics|tojson }},
+                bindingDomainsData: {{ binding_domains_data|tojson }},
+                defaultThresholds: {{ thresholds|tojson }}
+            });
+        });
+    </script>
+</body>
+</html>
